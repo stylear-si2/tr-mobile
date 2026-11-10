@@ -1,6 +1,8 @@
 /// Tipos de reporte disponibles (espejo exacto del backend)
 enum TipoReporte {
   ventas('VENTAS', 'Ventas'),
+  ventasPorSucursal('VENTAS_POR_SUCURSAL', 'Ventas por sucursal'),
+  ingresosPorCategoria('INGRESOS_POR_CATEGORIA', 'Ingresos por categoría'),
   productosMasVendidos('PRODUCTOS_MAS_VENDIDOS', 'Productos más vendidos'),
   inventario('INVENTARIO', 'Inventario'),
   reservas('RESERVAS', 'Reservas'),
@@ -27,7 +29,10 @@ class ReporteFiltros {
   final String fechaDesde; // yyyy-MM-dd
   final String fechaHasta; // yyyy-MM-dd
   final int? sucursalId;
-  final String agrupacion; // 'DIA' | 'MES'
+  final String agrupacion; // DIA, SEMANA o MES
+  final int? categoriaId;
+  final int? productoId;
+  final int limite;
   final bool soloBajoStock;
   final String? tipoVenta;
   final String? estado;
@@ -43,6 +48,9 @@ class ReporteFiltros {
     required this.fechaHasta,
     this.sucursalId,
     this.agrupacion = 'DIA',
+    this.categoriaId,
+    this.productoId,
+    this.limite = 10,
     this.soloBajoStock = false,
     this.tipoVenta,
     this.estado,
@@ -59,6 +67,9 @@ class ReporteFiltros {
     'fecha_hasta': fechaHasta,
     'sucursal_id': sucursalId,
     'agrupacion': agrupacion,
+    'categoria_id': categoriaId,
+    'producto_id': productoId,
+    'limite': limite,
     'solo_bajo_stock': soloBajoStock,
     'tipo_venta': tipoVenta,
     'estado': estado,
@@ -73,12 +84,18 @@ class ReporteFiltros {
 class ReporteCatalogoItem {
   final String id;
   final String nombre;
+  final int? categoriaId;
 
-  const ReporteCatalogoItem({required this.id, required this.nombre});
+  const ReporteCatalogoItem({
+    required this.id,
+    required this.nombre,
+    this.categoriaId,
+  });
 
   factory ReporteCatalogoItem.fromJson(Map<String, dynamic> json) =>
       ReporteCatalogoItem(
         id: json['id']?.toString() ?? '',
+        categoriaId: (json['categoria_id'] as num?)?.toInt(),
         nombre: json['nombre']?.toString() ?? '',
       );
 }
@@ -105,11 +122,32 @@ class ReporteSucursalItem {
 class ReporteCatalogo {
   final List<ReporteCatalogoItem> tipos;
   final List<ReporteSucursalItem> sucursales;
+  final List<ReporteCatalogoItem> categorias;
+  final List<ReporteCatalogoItem> productos;
 
-  const ReporteCatalogo({required this.tipos, required this.sucursales});
+  const ReporteCatalogo({
+    required this.tipos,
+    required this.sucursales,
+    this.categorias = const [],
+    this.productos = const [],
+  });
 
   factory ReporteCatalogo.fromJson(Map<String, dynamic> json) {
     return ReporteCatalogo(
+      categorias: (json['categorias'] as List? ?? [])
+          .map(
+            (e) => ReporteCatalogoItem.fromJson(
+              Map<String, dynamic>.from(e as Map),
+            ),
+          )
+          .toList(),
+      productos: (json['productos'] as List? ?? [])
+          .map(
+            (e) => ReporteCatalogoItem.fromJson(
+              Map<String, dynamic>.from(e as Map),
+            ),
+          )
+          .toList(),
       tipos: (json['tipos'] as List<dynamic>? ?? [])
           .map((e) => ReporteCatalogoItem.fromJson(e as Map<String, dynamic>))
           .toList(),

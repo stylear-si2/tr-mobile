@@ -41,6 +41,9 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
   DateTime _fechaHasta = DateTime.now();
   int? _sucursalId;
   String _agrupacion = 'DIA';
+  int? _categoriaId;
+  int? _productoId;
+  int _limite = 10;
   bool _soloBajoStock = false;
   String? _estado;
   String? _metodoPago;
@@ -386,6 +389,9 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
     fechaHasta: DateFormat(_dateFormat).format(_fechaHasta),
     sucursalId: _sucursalId,
     agrupacion: _agrupacion,
+    categoriaId: _categoriaId,
+    productoId: _productoId,
+    limite: _limite,
     soloBajoStock: _soloBajoStock,
     estado: _estado,
     metodoPago: _metodoPago,
@@ -773,6 +779,9 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
         _sucursalId = int.tryParse(sucursalValor?.toString() ?? '');
       }
     }
+    _categoriaId = (f['categoria_id'] as num?)?.toInt();
+    _productoId = (f['producto_id'] as num?)?.toInt();
+    _limite = (f['limite'] as num?)?.toInt() ?? 10;
     if (f.containsKey('agrupacion') && f['agrupacion'] != null) {
       _agrupacion = f['agrupacion'].toString();
     }
@@ -859,6 +868,8 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
   bool _usaFiltroEntrega() {
     return {
       TipoReporte.ventas,
+      TipoReporte.ventasPorSucursal,
+      TipoReporte.ingresosPorCategoria,
       TipoReporte.productosMasVendidos,
       TipoReporte.pagos,
     }.contains(_tipoSeleccionado);
@@ -1147,6 +1158,8 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
                     selected: seleccionado,
                     onSelected: (_) => setState(() {
                       _tipoSeleccionado = tipo;
+                      _categoriaId = null;
+                      _productoId = null;
                       _estado = null;
                       _metodoPago = null;
                       _proveedorPago = null;
@@ -1254,7 +1267,7 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
           _SectionTitle(titulo: 'Agrupación de datos'),
           const SizedBox(height: 10),
           Row(
-            children: ['DIA', 'MES'].map((ag) {
+            children: ['DIA', 'SEMANA', 'MES'].map((ag) {
               final sel = _agrupacion == ag;
               return Expanded(
                 child: GestureDetector(
@@ -1270,7 +1283,11 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
                       ),
                     ),
                     child: Text(
-                      ag == 'DIA' ? 'Por Día' : 'Por Mes',
+                      ag == 'DIA'
+                          ? 'Día'
+                          : ag == 'SEMANA'
+                          ? 'Semana'
+                          : 'Mes',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 13,
@@ -1285,6 +1302,55 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
           ),
           const SizedBox(height: 16),
 
+          if ([
+            TipoReporte.ventas,
+            TipoReporte.ventasPorSucursal,
+            TipoReporte.ingresosPorCategoria,
+            TipoReporte.productosMasVendidos,
+            TipoReporte.inventario,
+          ].contains(_tipoSeleccionado)) ...[
+            _SectionTitle(titulo: 'Categoría y producto'),
+            const SizedBox(height: 10),
+            _DropdownFiltro<int>(
+              value: _categoriaId,
+              hint: 'Todas las categorías',
+              items: {
+                for (final c
+                    in _catalogo?.categorias ?? <ReporteCatalogoItem>[])
+                  int.parse(c.id): c.nombre,
+              },
+              onChanged: (v) => setState(() {
+                _categoriaId = v;
+                _productoId = null;
+              }),
+            ),
+            const SizedBox(height: 10),
+            _DropdownFiltro<int>(
+              value: _productoId,
+              hint: 'Todos los productos',
+              items: {
+                for (final p in _catalogo?.productos ?? <ReporteCatalogoItem>[])
+                  if (_categoriaId == null || p.categoriaId == _categoriaId)
+                    int.parse(p.id): p.nombre,
+              },
+              onChanged: (v) => setState(() => _productoId = v),
+            ),
+            const SizedBox(height: 16),
+          ],
+          if (_tipoSeleccionado == TipoReporte.productosMasVendidos) ...[
+            _SectionTitle(titulo: 'Productos del ranking'),
+            const SizedBox(height: 10),
+            _DropdownFiltro<int>(
+              value: _limite,
+              hint: 'Cantidad',
+              items: {
+                for (final n in {_limite, 5, 10, 20, 50, 100})
+                  n: '$n productos',
+              },
+              onChanged: (v) => setState(() => _limite = v ?? 10),
+            ),
+            const SizedBox(height: 16),
+          ],
           if (_usaFiltroEstado()) ...[
             _SectionTitle(titulo: 'Estado / tipo'),
             const SizedBox(height: 10),
