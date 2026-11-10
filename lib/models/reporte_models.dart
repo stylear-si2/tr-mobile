@@ -197,6 +197,7 @@ class ReporteColumna {
 }
 
 class ReporteResultado {
+  final String? firmaResultado;
   final String tipo;
   final String titulo;
   final String? nota;
@@ -211,6 +212,7 @@ class ReporteResultado {
   final Map<String, dynamic> resumen, filtrosEfectivos;
 
   const ReporteResultado({
+    this.firmaResultado,
     required this.tipo,
     required this.titulo,
     this.nota,
@@ -229,6 +231,7 @@ class ReporteResultado {
 
   factory ReporteResultado.fromJson(Map<String, dynamic> json) {
     return ReporteResultado(
+      firmaResultado: json['firma_resultado'] as String?,
       tipo: json['tipo']?.toString() ?? '',
       titulo: json['titulo']?.toString() ?? '',
       nota: json['nota']?.toString(),

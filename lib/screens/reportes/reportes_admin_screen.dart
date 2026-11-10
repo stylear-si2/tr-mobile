@@ -16,6 +16,9 @@ import 'package:intl/intl.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/network/api_exceptions.dart';
 import '../../models/reporte_models.dart';
+import '../../models/analisis_reporte.dart';
+import 'analisis_reporte_panel.dart';
+import 'grafico_reporte_ia.dart';
 import '../../services/file_download_service.dart';
 import '../../services/reporte_service.dart';
 import '../../services/voz_service.dart';
@@ -63,6 +66,8 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
   ReporteFiltros? _filtrosResultado;
   String? _tipoVenta;
   int _revisionConsulta = 0;
+  int _revisionAnalisis = 0;
+  AnalisisReporte? _analisis;
   bool get _esAdmin => context.read<AuthProvider>().esAdmin;
   bool _capacidad(String clave) =>
       context.read<PlanProvider>().capacidades?.habilita(clave) == true;
@@ -127,7 +132,11 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
     setState(() {
       _generando = true;
       _errorReporte = null;
-      if (!reutilizar) _resultado = null;
+      if (!reutilizar) {
+        _resultado = null;
+        _analisis = null;
+        _revisionAnalisis++;
+      }
     });
 
     try {
@@ -136,6 +145,22 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
       if (mounted && vigente) {
         if (revision != _revisionConsulta) return;
         setState(() {
+          if (_resultado != null &&
+              (jsonEncode(_resultado!.resumen) !=
+                      jsonEncode(resultado.resumen) ||
+                  jsonEncode(
+                        _resultado!.serieGrafico
+                            .map((s) => [s.label, s.valor])
+                            .toList(),
+                      ) !=
+                      jsonEncode(
+                        resultado.serieGrafico
+                            .map((s) => [s.label, s.valor])
+                            .toList(),
+                      ))) {
+            _analisis = null;
+            _revisionAnalisis++;
+          }
           _resultado = resultado;
           _filtrosResultado = filtros;
         });
@@ -182,11 +207,17 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
         ext = 'html';
         mimeType = 'text/html; charset=utf-8';
       } else if (formato == 'pdf') {
-        bytes = await ReporteService.exportarPdf(filtros);
+        bytes = await ReporteService.exportarPdf(
+          filtros,
+          analisisId: _analisis?.id,
+        );
         ext = 'pdf';
         mimeType = 'application/pdf';
       } else {
-        bytes = await ReporteService.exportarExcel(filtros);
+        bytes = await ReporteService.exportarExcel(
+          filtros,
+          analisisId: _analisis?.id,
+        );
         ext = 'xlsx';
         mimeType =
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -1672,6 +1703,17 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
           _ReporteHeader(resultado: r),
           const SizedBox(height: 16),
 
+          AnalisisReportePanel(
+            key: ValueKey(_revisionAnalisis),
+            filtros: _filtrosResultado!,
+            firmaResultado: r.firmaResultado,
+            habilitado: _capacidad('reportes_interpretacion'),
+            vozHabilitada: _capacidad('reportes_voz'),
+            onResultado: (a) {
+              if (vigente) setState(() => _analisis = a);
+            },
+          ),
+          const SizedBox(height: 16),
           // Indicadores
           if (r.indicadores.isNotEmpty) ...[
             _GridIndicadores(indicadores: r.indicadores),
@@ -1680,7 +1722,14 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
 
           // Gráfico de barras
           if (r.serieGrafico.isNotEmpty) ...[
-            _GraficoBarras(serie: r.serieGrafico, titulo: r.titulo),
+            if (_analisis case final a?)
+              GraficoReporteIA(
+                serie: r.serieGrafico,
+                tipo: a.grafico,
+                titulo: r.titulo,
+              )
+            else
+              _GraficoBarras(serie: r.serieGrafico, titulo: r.titulo),
             const SizedBox(height: 16),
           ],
 
