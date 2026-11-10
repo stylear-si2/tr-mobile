@@ -42,6 +42,7 @@ class _CarritoScreenState extends State<CarritoScreen> {
   LatLng _ubicacionDelivery = const LatLng(-17.783327, -63.182140);
   late DateTime _fechaCitaReserva;
   bool _procesandoPago = false;
+  bool _checkoutAbierto = false;
   bool _usaDelivery = false;
   bool _cotizandoDelivery = false;
   bool _buscandoUbicacion = false;
@@ -797,441 +798,245 @@ class _CarritoScreenState extends State<CarritoScreen> {
                 ),
               ),
             // Lista de items del carrito
-            Expanded(
-              child: ListView.separated(
-                padding: const EdgeInsets.all(16),
-                itemCount: carrito.items.length,
-                separatorBuilder: (context, index) =>
-                    const SizedBox(height: 12),
-                itemBuilder: (context, index) {
-                  final item = carrito.items[index];
-                  return Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(14),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Icono de prenda
-                          Container(
-                            width: 60,
-                            height: 60,
-                            decoration: BoxDecoration(
-                              color: AppColors.background,
-                              borderRadius: BorderRadius.circular(8),
+            if (!_checkoutAbierto)
+              Expanded(
+                child: ListView.separated(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: carrito.items.length,
+                  separatorBuilder: (context, index) =>
+                      const SizedBox(height: 12),
+                  itemBuilder: (context, index) {
+                    final item = carrito.items[index];
+                    return Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Icono de prenda
+                            Container(
+                              width: 60,
+                              height: 60,
+                              decoration: BoxDecoration(
+                                color: AppColors.background,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(
+                                Icons.checkroom,
+                                color: AppColors.primary,
+                              ),
                             ),
-                            child: const Icon(
-                              Icons.checkroom,
-                              color: AppColors.primary,
-                            ),
-                          ),
-                          const SizedBox(width: 14),
+                            const SizedBox(width: 14),
 
-                          // Información
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  '${item.producto} · ${item.paqueteId == null ? 'Unidad' : '${item.tipoCompra} #${item.paqueteId}'}',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 15,
-                                    color: AppColors.textPrimary,
+                            // Información
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '${item.producto} · ${item.paqueteId == null ? 'Unidad' : '${item.tipoCompra} #${item.paqueteId}'}',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 15,
+                                      color: AppColors.textPrimary,
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  'Talla: ${item.talla} • Color: ${item.color}',
-                                  style: const TextStyle(
-                                    fontSize: 12,
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    'Talla: ${item.talla} • Color: ${item.color}',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: AppColors.textSecondary,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    item.disponibleParaCompra
+                                        ? currencyFormat.format(
+                                            item.precioUnitario,
+                                          )
+                                        : item.motivoNoDisponible ?? 'No disponible: retira esta prenda',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 14,
+                                      color: AppColors.primary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+
+                            // Controles de Cantidad y Eliminar
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.close,
+                                    size: 18,
                                     color: AppColors.textSecondary,
                                   ),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                  tooltip: item.paqueteId == null
+                                      ? 'Quitar producto'
+                                      : 'Quitar paquete completo',
+                                  onPressed: () =>
+                                      carrito.eliminarItem(item.id),
                                 ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  item.disponibleParaCompra
-                                      ? currencyFormat.format(
-                                          item.precioUnitario,
-                                        )
-                                      : item.motivoNoDisponible ??
-                                            'No disponible: retira esta prenda',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 14,
-                                    color: AppColors.primary,
+                                const SizedBox(height: 8),
+                                Container(
+                                  decoration: BoxDecoration(
+                                    color: AppColors.background,
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(color: AppColors.border),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      InkWell(
+                                        onTap: item.paqueteId != null
+                                            ? null
+                                            : () => carrito.actualizarCantidad(
+                                                item.id,
+                                                item.cantidad - 1,
+                                              ),
+                                        child: const Padding(
+                                          padding: EdgeInsets.symmetric(
+                                            horizontal: 6,
+                                            vertical: 4,
+                                          ),
+                                          child: Icon(Icons.remove, size: 14),
+                                        ),
+                                      ),
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                        ),
+                                        child: Text(
+                                          '${item.cantidad}',
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      ),
+                                      InkWell(
+                                        onTap: item.paqueteId != null
+                                            ? null
+                                            : () => carrito.actualizarCantidad(
+                                                item.id,
+                                                item.cantidad + 1,
+                                              ),
+                                        child: const Padding(
+                                          padding: EdgeInsets.symmetric(
+                                            horizontal: 6,
+                                            vertical: 4,
+                                          ),
+                                          child: Icon(Icons.add, size: 14),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ],
                             ),
-                          ),
-
-                          // Controles de Cantidad y Eliminar
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.close,
-                                  size: 18,
-                                  color: AppColors.textSecondary,
-                                ),
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                                tooltip: item.paqueteId == null
-                                    ? 'Quitar producto'
-                                    : 'Quitar paquete completo',
-                                onPressed: () => carrito.eliminarItem(item.id),
-                              ),
-                              const SizedBox(height: 8),
-                              Container(
-                                decoration: BoxDecoration(
-                                  color: AppColors.background,
-                                  borderRadius: BorderRadius.circular(6),
-                                  border: Border.all(color: AppColors.border),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    InkWell(
-                                      onTap: item.paqueteId != null
-                                          ? null
-                                          : () => carrito.actualizarCantidad(
-                                              item.id,
-                                              item.cantidad - 1,
-                                            ),
-                                      child: const Padding(
-                                        padding: EdgeInsets.symmetric(
-                                          horizontal: 6,
-                                          vertical: 4,
-                                        ),
-                                        child: Icon(Icons.remove, size: 14),
-                                      ),
-                                    ),
-                                    Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 6,
-                                      ),
-                                      child: Text(
-                                        '${item.cantidad}',
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 13,
-                                        ),
-                                      ),
-                                    ),
-                                    InkWell(
-                                      onTap: item.paqueteId != null
-                                          ? null
-                                          : () => carrito.actualizarCantidad(
-                                              item.id,
-                                              item.cantidad + 1,
-                                            ),
-                                      child: const Padding(
-                                        padding: EdgeInsets.symmetric(
-                                          horizontal: 6,
-                                          vertical: 4,
-                                        ),
-                                        child: Icon(Icons.add, size: 14),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                  );
-                },
+                    );
+                  },
+                ),
+              ),
+
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: FilledButton.icon(
+                icon: Icon(
+                  _checkoutAbierto
+                      ? Icons.expand_less
+                      : Icons.shopping_bag_outlined,
+                ),
+                label: Text(
+                  _checkoutAbierto
+                      ? 'Volver a las prendas'
+                      : 'Continuar: reserva o pago',
+                ),
+                onPressed: () =>
+                    setState(() => _checkoutAbierto = !_checkoutAbierto),
               ),
             ),
-
-            // Panel de Selección de Sucursal y Confirmación
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(20),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.06),
-                    offset: const Offset(0, -3),
-                    blurRadius: 10,
-                  ),
-                ],
-              ),
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.of(context).size.height * 0.58,
-                ),
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // Selector de Sucursal de Retiro
-                      if (sucursales.isNotEmpty) ...[
-                        Text(
-                          _usaDelivery
-                              ? 'Sucursal origen:'
-                              : 'Sucursal de retiro:',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          decoration: BoxDecoration(
-                            color: AppColors.background,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: AppColors.border),
-                          ),
-                          child: DropdownButtonHideUnderline(
-                            child: DropdownButton<int>(
-                              value: sucursalActual,
-                              isExpanded: true,
-                              items: sucursales.map((s) {
-                                return DropdownMenuItem<int>(
-                                  value: s.id,
-                                  child: Text(
-                                    '${s.nombre} (${s.ciudad})',
-                                    style: const TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                );
-                              }).toList(),
-                              onChanged: (val) {
-                                setState(() {
-                                  _sucursalSeleccionadaId = val;
-                                  _invalidarCotizacion();
-                                });
-                              },
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-                      ] else ...[
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: AppColors.danger.withValues(alpha: 0.08),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                              color: AppColors.danger.withValues(alpha: 0.25),
-                            ),
-                          ),
-                          child: const Text(
-                            'No hay una sucursal con stock suficiente para todos los productos del carrito.',
-                            style: TextStyle(
-                              color: AppColors.danger,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-                      ],
-
-                      SegmentedButton<bool>(
-                        segments: const [
-                          ButtonSegment<bool>(
-                            value: false,
-                            label: Text('Recojo'),
-                            icon: Icon(Icons.storefront_outlined),
-                          ),
-                          ButtonSegment<bool>(
-                            value: true,
-                            label: Text('Delivery'),
-                            icon: Icon(Icons.local_shipping_outlined),
-                          ),
-                        ],
-                        selected: {_usaDelivery},
-                        onSelectionChanged: (value) {
-                          setState(() {
-                            _usaDelivery = value.first;
-                            _invalidarCotizacion();
-                          });
-                        },
+            if (_checkoutAbierto)
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(20),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.06),
+                        offset: const Offset(0, -3),
+                        blurRadius: 10,
                       ),
-                      if (_usaDelivery) ...[
-                        const Text(
-                          'Compra y envío se pagan con Stripe o QR. No hay efectivo al entregar.',
-                        ),
-                        DropdownButtonFormField<int>(
-                          initialValue: _direccionEntregaId,
-                          decoration: const InputDecoration(
-                            labelText: 'Dirección guardada (opcional)',
-                          ),
-                          items: _direccionesEntrega
-                              .map(
-                                (d) => DropdownMenuItem(
-                                  value: d['id'] as int,
-                                  child: Text(
-                                    d['direccion'].toString(),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: (id) {
-                            final d = _direccionesEntrega
-                                .where((x) => x['id'] == id)
-                                .firstOrNull;
-                            if (d != null) {
-                              setState(() {
-                                _direccionEntregaId = id;
-                                _direccionDeliveryCtrl.text = d['direccion']
-                                    .toString();
-                                _referenciaDeliveryCtrl.text =
-                                    d['referencia']?.toString() ?? '';
-                                _invalidarCotizacion();
-                              });
-                              _buscarUbicacionDelivery();
-                            }
-                          },
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: _direccionDeliveryCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'Dirección de entrega',
-                            hintText: 'Ej. Av. Banzer 4to anillo, Santa Cruz',
-                          ),
-                          onChanged: (_) => setState(_invalidarCotizacion),
-                        ),
-                        const SizedBox(height: 8),
-                        TextField(
-                          controller: _referenciaDeliveryCtrl,
-                          onChanged: (_) => setState(_invalidarCotizacion),
-                          decoration: const InputDecoration(
-                            labelText: 'Referencia',
-                            hintText: 'Ej. Casa roja frente a farmacia',
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        _buildDeliveryMap(sucursalSeleccionada),
-                        const SizedBox(height: 8),
-                        const Text(
-                          'Busca tu dirección o toca el mapa para ajustar el punto exacto de entrega.',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        OutlinedButton.icon(
-                          onPressed: _buscandoUbicacion
-                              ? null
-                              : _buscarUbicacionDelivery,
-                          icon: const Icon(Icons.search_outlined),
-                          label: Text(
-                            _buscandoUbicacion
-                                ? 'Buscando...'
-                                : 'Buscar ubicación',
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        OutlinedButton.icon(
-                          onPressed: _cotizandoDelivery
-                              ? null
-                              : _cotizarDelivery,
-                          icon: const Icon(Icons.map_outlined),
-                          label: Text(
-                            _cotizandoDelivery
-                                ? 'Cotizando...'
-                                : 'Cotizar delivery',
-                          ),
-                        ),
-                        if (_cotizacionDelivery?.cotizacionId != null) ...[
-                          CheckboxListTile(
-                            value: _cotizacionAceptada,
-                            onChanged: (v) => setState(
-                              () => _cotizacionAceptada = v ?? false,
-                            ),
-                            title: const Text(
-                              'Acepto la cotización del envío mostrada',
-                            ),
-                          ),
+                    ],
+                  ),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // Selector de Sucursal de Retiro
+                        if (sucursales.isNotEmpty) ...[
                           Text(
-                            'Válida hasta ${_cotizacionDelivery!.venceEn}. Cambiar el destino requiere cotizar de nuevo.',
-                          ),
-                        ],
-                        if (_cotizacionDelivery != null) ...[
-                          const SizedBox(height: 8),
-                          Text(
-                            _cotizacionDelivery!.disponible
-                                ? 'Delivery: ${_cotizacionDelivery!.distanciaKm.toStringAsFixed(2)} km · ${_cotizacionDelivery!.tiempoEstimadoMin} min · ${currencyFormat.format(_cotizacionDelivery!.costoDelivery)}'
-                                : (_cotizacionDelivery!.mensaje ??
-                                      'Delivery no disponible'),
-                            style: TextStyle(
-                              color: _cotizacionDelivery!.disponible
-                                  ? AppColors.success
-                                  : AppColors.danger,
-                              fontWeight: FontWeight.w700,
+                            _usaDelivery
+                                ? 'Sucursal origen:'
+                                : 'Sucursal de retiro:',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textSecondary,
                             ),
                           ),
-                        ],
-                      ],
-
-                      if (!_usaDelivery) ...[
-                        const SizedBox(height: 12),
-                        OutlinedButton.icon(
-                          onPressed: _seleccionarFechaCita,
-                          icon: const Icon(Icons.event_available_outlined),
-                          label: Text(
-                            'Cita para probar/recoger: ${_fechaVista(_fechaCitaReserva)}',
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: AppColors.accentSoft,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: AppColors.border),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Reserva gratuita',
-                                style: TextStyle(
-                                  color: AppColors.textSecondary,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                currencyFormat.format(_montoReserva()),
-                                style: const TextStyle(
-                                  color: AppColors.primary,
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 18,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              const Text(
-                                'Sin anticipo. Tus prendas quedan apartadas por 7 días desde la creación de la reserva.',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: AppColors.textSecondary,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        if (excedeMaximoReserva) ...[
-                          const SizedBox(height: 8),
+                          const SizedBox(height: 6),
                           Container(
-                            padding: const EdgeInsets.all(10),
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            decoration: BoxDecoration(
+                              color: AppColors.background,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: AppColors.border),
+                            ),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<int>(
+                                value: sucursalActual,
+                                isExpanded: true,
+                                items: sucursales.map((s) {
+                                  return DropdownMenuItem<int>(
+                                    value: s.id,
+                                    child: Text(
+                                      '${s.nombre} (${s.ciudad})',
+                                      style: const TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  );
+                                }).toList(),
+                                onChanged: (val) {
+                                  setState(() {
+                                    _sucursalSeleccionadaId = val;
+                                    _invalidarCotizacion();
+                                  });
+                                },
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                        ] else ...[
+                          Container(
+                            padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
                               color: AppColors.danger.withValues(alpha: 0.08),
                               borderRadius: BorderRadius.circular(10),
@@ -1240,188 +1045,408 @@ class _CarritoScreenState extends State<CarritoScreen> {
                               ),
                             ),
                             child: const Text(
-                              'Para reservar solo puedes apartar hasta 2 unidades de la misma prenda.',
+                              'No hay una sucursal con stock suficiente para todos los productos del carrito.',
                               style: TextStyle(
                                 color: AppColors.danger,
-                                fontSize: 12,
                                 fontWeight: FontWeight.w700,
+                                fontSize: 12,
                               ),
                             ),
                           ),
+                          const SizedBox(height: 14),
                         ],
-                      ],
 
-                      // Resumen de Montos
-                      const SizedBox(height: 14),
-                      if (_usaDelivery)
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text(
-                              'Delivery:',
-                              style: TextStyle(color: AppColors.textSecondary),
+                        SegmentedButton<bool>(
+                          segments: const [
+                            ButtonSegment<bool>(
+                              value: false,
+                              label: Text('Recojo'),
+                              icon: Icon(Icons.storefront_outlined),
                             ),
-                            Text(currencyFormat.format(costoDelivery)),
+                            ButtonSegment<bool>(
+                              value: true,
+                              label: Text('Delivery'),
+                              icon: Icon(Icons.local_shipping_outlined),
+                            ),
                           ],
+                          selected: {_usaDelivery},
+                          onSelectionChanged: (value) {
+                            setState(() {
+                              _usaDelivery = value.first;
+                              _invalidarCotizacion();
+                            });
+                          },
                         ),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            _usaDelivery
-                                ? 'Total de compra:'
-                                : 'Valor de prendas:',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.textPrimary,
-                            ),
-                          ),
-                          Text(
-                            currencyFormat.format(
-                              _usaDelivery
-                                  ? totalConDelivery
-                                  : carrito.totalMonto,
-                            ),
-                            style: const TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.w800,
-                              color: AppColors.primary,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-
-                      // Selector de Método de Pago
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
+                        if (_usaDelivery) ...[
                           const Text(
-                            'MÉTODO DE PAGO:',
+                            'Compra y envío se pagan con Stripe o QR. No hay efectivo al entregar.',
+                          ),
+                          DropdownButtonFormField<int>(
+                            initialValue: _direccionEntregaId,
+                            decoration: const InputDecoration(
+                              labelText: 'Dirección guardada (opcional)',
+                            ),
+                            items: _direccionesEntrega
+                                .map(
+                                  (d) => DropdownMenuItem(
+                                    value: d['id'] as int,
+                                    child: Text(
+                                      d['direccion'].toString(),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (id) {
+                              final d = _direccionesEntrega
+                                  .where((x) => x['id'] == id)
+                                  .firstOrNull;
+                              if (d != null) {
+                                setState(() {
+                                  _direccionEntregaId = id;
+                                  _direccionDeliveryCtrl.text = d['direccion']
+                                      .toString();
+                                  _referenciaDeliveryCtrl.text =
+                                      d['referencia']?.toString() ?? '';
+                                  _invalidarCotizacion();
+                                });
+                                _buscarUbicacionDelivery();
+                              }
+                            },
+                          ),
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: _direccionDeliveryCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'Dirección de entrega',
+                              hintText: 'Ej. Av. Banzer 4to anillo, Santa Cruz',
+                            ),
+                            onChanged: (_) => setState(_invalidarCotizacion),
+                          ),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: _referenciaDeliveryCtrl,
+                            onChanged: (_) => setState(_invalidarCotizacion),
+                            decoration: const InputDecoration(
+                              labelText: 'Referencia',
+                              hintText: 'Ej. Casa roja frente a farmacia',
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          _buildDeliveryMap(sucursalSeleccionada),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Busca tu dirección o toca el mapa para ajustar el punto exacto de entrega.',
                             style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0.6,
+                              fontSize: 12,
                               color: AppColors.textSecondary,
                             ),
                           ),
                           const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _buildMetodoPagoChip(
-                                  label: 'QR Simple',
-                                  icon: Icons.qr_code_2,
-                                  selected: _metodoPago == 'QR',
-                                  onTap: () =>
-                                      setState(() => _metodoPago = 'QR'),
-                                ),
+                          OutlinedButton.icon(
+                            onPressed: _buscandoUbicacion
+                                ? null
+                                : _buscarUbicacionDelivery,
+                            icon: const Icon(Icons.search_outlined),
+                            label: Text(
+                              _buscandoUbicacion
+                                  ? 'Buscando...'
+                                  : 'Buscar ubicación',
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          OutlinedButton.icon(
+                            onPressed: _cotizandoDelivery
+                                ? null
+                                : _cotizarDelivery,
+                            icon: const Icon(Icons.map_outlined),
+                            label: Text(
+                              _cotizandoDelivery
+                                  ? 'Cotizando...'
+                                  : 'Cotizar delivery',
+                            ),
+                          ),
+                          if (_cotizacionDelivery?.cotizacionId != null) ...[
+                            CheckboxListTile(
+                              value: _cotizacionAceptada,
+                              onChanged: (v) => setState(
+                                () => _cotizacionAceptada = v ?? false,
                               ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: _buildMetodoPagoChip(
-                                  label: 'Tarjeta Stripe',
-                                  icon: Icons.credit_card,
-                                  selected: _metodoPago == 'STRIPE',
-                                  onTap: () =>
-                                      setState(() => _metodoPago = 'STRIPE'),
-                                ),
+                              title: const Text(
+                                'Acepto la cotización del envío mostrada',
                               ),
-                              if (!_usaDelivery) ...[
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: _buildMetodoPagoChip(
-                                    label: 'En tienda',
-                                    icon: Icons.storefront_outlined,
-                                    selected: _metodoPago == 'RESERVA',
-                                    onTap: () =>
-                                        setState(() => _metodoPago = 'RESERVA'),
+                            ),
+                            Text(
+                              'Válida hasta ${_cotizacionDelivery!.venceEn}. Cambiar el destino requiere cotizar de nuevo.',
+                            ),
+                          ],
+                          if (_cotizacionDelivery != null) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              _cotizacionDelivery!.disponible
+                                  ? 'Delivery: ${_cotizacionDelivery!.distanciaKm.toStringAsFixed(2)} km · ${_cotizacionDelivery!.tiempoEstimadoMin} min · ${currencyFormat.format(_cotizacionDelivery!.costoDelivery)}'
+                                  : (_cotizacionDelivery!.mensaje ??
+                                        'Delivery no disponible'),
+                              style: TextStyle(
+                                color: _cotizacionDelivery!.disponible
+                                    ? AppColors.success
+                                    : AppColors.danger,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ],
+
+                        if (!_usaDelivery) ...[
+                          const SizedBox(height: 12),
+                          OutlinedButton.icon(
+                            onPressed: _seleccionarFechaCita,
+                            icon: const Icon(Icons.event_available_outlined),
+                            label: Text(
+                              'Cita para probar/recoger: ${_fechaVista(_fechaCitaReserva)}',
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: AppColors.accentSoft,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: AppColors.border),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Reserva gratuita',
+                                  style: TextStyle(
+                                    color: AppColors.textSecondary,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  currencyFormat.format(_montoReserva()),
+                                  style: const TextStyle(
+                                    color: AppColors.primary,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 18,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                const Text(
+                                  'Sin anticipo. Tus prendas quedan apartadas por 7 días desde la creación de la reserva.',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: AppColors.textSecondary,
                                   ),
                                 ),
                               ],
+                            ),
+                          ),
+                          if (excedeMaximoReserva) ...[
+                            const SizedBox(height: 8),
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: AppColors.danger.withValues(alpha: 0.08),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: AppColors.danger.withValues(
+                                    alpha: 0.25,
+                                  ),
+                                ),
+                              ),
+                              child: const Text(
+                                'Para reservar solo puedes apartar hasta 2 unidades de la misma prenda.',
+                                style: TextStyle(
+                                  color: AppColors.danger,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+
+                        // Resumen de Montos
+                        const SizedBox(height: 14),
+                        if (_usaDelivery)
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                'Delivery:',
+                                style: TextStyle(
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                              Text(currencyFormat.format(costoDelivery)),
                             ],
                           ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-
-                      // Botones de Acción según método
-                      if (_procesandoPago)
-                        const Center(
-                          child: Padding(
-                            padding: EdgeInsets.symmetric(vertical: 8),
-                            child: CircularProgressIndicator(
-                              color: AppColors.accent,
+                        Wrap(
+                          alignment: WrapAlignment.spaceBetween,
+                          spacing: 12,
+                          runSpacing: 6,
+                          children: [
+                            Text(
+                              _usaDelivery
+                                  ? 'Total de compra:'
+                                  : 'Valor de prendas:',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.textPrimary,
+                              ),
                             ),
-                          ),
-                        )
-                      else if (_metodoPago == 'RESERVA' && !_usaDelivery)
-                        CustomButton(
-                          text: 'Confirmar reserva (pagar en tienda)',
-                          icon: Icons.calendar_today_outlined,
-                          onPressed: puedeConfirmar ? _confirmarReserva : null,
-                        )
-                      else if (_metodoPago == 'QR')
-                        ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF16A34A),
-                            foregroundColor: Colors.white,
-                            minimumSize: const Size.fromHeight(50),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                            Text(
+                              currencyFormat.format(
+                                _usaDelivery
+                                    ? totalConDelivery
+                                    : carrito.totalMonto,
+                              ),
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w800,
+                                color: AppColors.primary,
+                              ),
                             ),
-                            elevation: 1,
-                          ),
-                          icon: const Icon(
-                            Icons.qr_code_2,
-                            color: Colors.white,
-                            size: 22,
-                          ),
-                          label: Text(
-                            'Probar pago QR (${currencyFormat.format(_usaDelivery ? totalConDelivery : carrito.totalMonto)})',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 15,
-                            ),
-                          ),
-                          onPressed: sucursalActual != null
-                              ? _pagarConQr
-                              : null,
-                        )
-                      else
-                        OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            minimumSize: const Size.fromHeight(50),
-                            side: const BorderSide(
-                              color: Color(0xFF635BFF),
-                              width: 1.5,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          icon: const Icon(
-                            Icons.credit_card,
-                            color: Color(0xFF635BFF),
-                          ),
-                          label: Text(
-                            'Pagar con Stripe (${currencyFormat.format(_usaDelivery ? totalConDelivery : carrito.totalMonto)})',
-                            style: const TextStyle(
-                              color: Color(0xFF635BFF),
-                              fontWeight: FontWeight.w700,
-                              fontSize: 15,
-                            ),
-                          ),
-                          onPressed: sucursalActual != null
-                              ? _pagarConStripe
-                              : null,
+                          ],
                         ),
-                    ],
+                        const SizedBox(height: 16),
+
+                        // Selector de Método de Pago
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'MÉTODO DE PAGO:',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.6,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _buildMetodoPagoChip(
+                                    label: 'QR Simple',
+                                    icon: Icons.qr_code_2,
+                                    selected: _metodoPago == 'QR',
+                                    onTap: () =>
+                                        setState(() => _metodoPago = 'QR'),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: _buildMetodoPagoChip(
+                                    label: 'Tarjeta Stripe',
+                                    icon: Icons.credit_card,
+                                    selected: _metodoPago == 'STRIPE',
+                                    onTap: () =>
+                                        setState(() => _metodoPago = 'STRIPE'),
+                                  ),
+                                ),
+                                if (!_usaDelivery) ...[
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: _buildMetodoPagoChip(
+                                      label: 'En tienda',
+                                      icon: Icons.storefront_outlined,
+                                      selected: _metodoPago == 'RESERVA',
+                                      onTap: () => setState(
+                                        () => _metodoPago = 'RESERVA',
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Botones de Acción según método
+                        if (_procesandoPago)
+                          const Center(
+                            child: Padding(
+                              padding: EdgeInsets.symmetric(vertical: 8),
+                              child: CircularProgressIndicator(
+                                color: AppColors.accent,
+                              ),
+                            ),
+                          )
+                        else if (_metodoPago == 'RESERVA' && !_usaDelivery)
+                          CustomButton(
+                            text: 'Confirmar reserva (pagar en tienda)',
+                            icon: Icons.calendar_today_outlined,
+                            onPressed: puedeConfirmar
+                                ? _confirmarReserva
+                                : null,
+                          )
+                        else if (_metodoPago == 'QR')
+                          ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF16A34A),
+                              foregroundColor: Colors.white,
+                              minimumSize: const Size.fromHeight(50),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              elevation: 1,
+                            ),
+                            icon: const Icon(
+                              Icons.qr_code_2,
+                              color: Colors.white,
+                              size: 22,
+                            ),
+                            label: Text(
+                              'Probar pago QR (${currencyFormat.format(_usaDelivery ? totalConDelivery : carrito.totalMonto)})',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 15,
+                              ),
+                            ),
+                            onPressed: sucursalActual != null
+                                ? _pagarConQr
+                                : null,
+                          )
+                        else
+                          OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size.fromHeight(50),
+                              side: const BorderSide(
+                                color: Color(0xFF635BFF),
+                                width: 1.5,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            icon: const Icon(
+                              Icons.credit_card,
+                              color: Color(0xFF635BFF),
+                            ),
+                            label: Text(
+                              'Pagar con Stripe (${currencyFormat.format(_usaDelivery ? totalConDelivery : carrito.totalMonto)})',
+                              style: const TextStyle(
+                                color: Color(0xFF635BFF),
+                                fontWeight: FontWeight.w700,
+                                fontSize: 15,
+                              ),
+                            ),
+                            onPressed: sucursalActual != null
+                                ? _pagarConStripe
+                                : null,
+                          ),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
           ],
         ),
       ),

@@ -31,7 +31,7 @@ Future<void> recibirPushFondo(RemoteMessage message) async {
   if (firebaseHabilitado && Firebase.apps.isEmpty) {
     await Firebase.initializeApp(options: opcionesFirebase());
   }
-  // El aviso del sistema es genérico. Los datos se consultan con sesión al abrir la bandeja.
+  // Android presenta el título y mensaje del evento; el detalle requiere sesión.
 }
 
 class ReferenciaPush {
@@ -219,7 +219,13 @@ class FirebasePush {
       final resumen = await NotificacionesService.resumen();
       ApiClient.validarGeneracion(gen);
       noLeidas.value = (resumen['no_leidas'] as num).toInt();
-      if (android) await puente.invokeMethod<void>('mostrar', r.toJson());
+      if (android) {
+        await puente.invokeMethod<void>('mostrar', {
+          ...r.toJson(),
+          'titulo': m.notification?.title ?? 'StyleAR',
+          'mensaje': m.notification?.body ?? 'Abre tu bandeja para consultar el aviso.',
+        });
+      }
     } catch (_) {
       /* Una referencia ajena o revocada nunca produce contenido local. */
     }

@@ -114,6 +114,15 @@ class ContextoSesion extends ChangeNotifier {
     await _persistir(SessionStorage.clearSession);
   }
 
+  void restaurarVistaLocal(EmpresaPublica tienda, UsuarioAutenticado cuenta) {
+    empresa = tienda;
+    usuario = cuenta;
+    token = null;
+    requiereLogin = false;
+    modoPlataforma = false;
+    notifyListeners();
+  }
+
   void suspenderParaOffline() {
     token = null;
     usuario = null;

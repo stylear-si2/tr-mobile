@@ -1,3 +1,6 @@
+import '../../core/session/contexto_sesion.dart';
+import 'acceso_vestidor_cliente.dart';
+
 import 'dart:async';
 import 'dart:convert';
 
@@ -23,7 +26,9 @@ class VestidorEnVivoScreen extends StatefulWidget {
   State<VestidorEnVivoScreen> createState() => _VestidorEnVivoScreenState();
 }
 
-class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
+class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen>
+    with WidgetsBindingObserver {
+  late final int _generacionSesion;
   WebViewController? _webViewController;
   bool _cargandoStream = true;
   bool _permisoDenegado = false;
@@ -49,19 +54,57 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
   @override
   void initState() {
     super.initState();
-    _iniciarTodo();
+    _generacionSesion = ContextoSesion.instance.generacion;
+    ContextoSesion.instance.addListener(_cambioSesion);
+    WidgetsBinding.instance.addObserver(this);
+    if (context.read<AuthProvider>().esCliente &&
+        context.read<AuthProvider>().estaAutenticado) {
+      _iniciarTodo();
+    }
   }
 
   @override
   void dispose() {
     _countdownTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    ContextoSesion.instance.removeListener(_cambioSesion);
+    _webViewController
+        ?.runJavaScript("window.suspendVestidor?.();")
+        .catchError((_) {});
     super.dispose();
+  }
+
+  void _cambioSesion() {
+    if (!mounted || ContextoSesion.instance.generacion == _generacionSesion) {
+      return;
+    }
+    _webViewController
+        ?.runJavaScript("window.suspendVestidor?.();")
+        .catchError((_) {});
+    _countdownTimer?.cancel();
+    setState(() {
+      _webViewController = null;
+      _cargandoStream = false;
+      _errorMensaje = 'La sesión cambió. Vuelve a abrir el vestidor.';
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_webViewController != null &&
+        (state == AppLifecycleState.inactive ||
+            state == AppLifecycleState.paused ||
+            state == AppLifecycleState.detached)) {
+      _webViewController
+          ?.runJavaScript("window.suspendVestidor?.();")
+          .catchError((_) {});
+      if (mounted) setState(() => _sesionPausada = true);
+    }
   }
 
   Future<void> _iniciarTodo() async {
     // 1. Pedir permiso nativo del sistema Android primero para que el WebView nunca sea bloqueado
     final status = await Permission.camera.request();
-    await Permission.microphone.request();
     if (!status.isGranted) {
       if (mounted) {
         setState(() {
@@ -91,7 +134,9 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
 
   Future<void> _cargarCatalogo() async {
     try {
-      final prendas = await VestidorApiService.listarPrendasDisponibles(limite: 30);
+      final prendas = await VestidorApiService.listarPrendasDisponibles(
+        limite: 30,
+      );
       if (!mounted) return;
 
       setState(() {
@@ -114,12 +159,11 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
   }
 
   Future<void> _iniciarWebView() async {
-    final productoId = _prendaSeleccionada?['producto_id'] ?? widget.productoInicialId ?? 1;
+    final productoId =
+        _prendaSeleccionada?['producto_id'] ?? widget.productoInicialId ?? 1;
 
     // Registrar telemetría
-    final auth = Provider.of<AuthProvider>(context, listen: false);
     VestidorApiService.registrarSesion(
-      clienteId: auth.usuario?.id,
       productoId: productoId,
       origen: 'MOVIL_DECART_WEBRTC_VIVO',
     );
@@ -133,6 +177,13 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
       ..setBackgroundColor(Colors.black)
       ..setNavigationDelegate(
         NavigationDelegate(
+          onNavigationRequest: (request) {
+            final destino = Uri.tryParse(request.url);
+            return destino?.origin == targetUrl.origin &&
+                    destino?.path == targetUrl.path
+                ? NavigationDecision.navigate
+                : NavigationDecision.prevent;
+          },
           onPageFinished: (_) {
             if (mounted) {
               setState(() => _cargandoStream = false);
@@ -151,7 +202,7 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
       );
 
     controller.setOnConsoleMessage((message) {
-      debugPrint('[WebView JS] ${message.level}: ${message.message}');
+      // No registrar respuestas, URL ni credenciales del proveedor desde el visor.
     });
 
     controller.addJavaScriptChannel(
@@ -174,7 +225,12 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
     if (controller.platform is AndroidWebViewController) {
       final android = controller.platform as AndroidWebViewController;
       android.setOnPlatformPermissionRequest((request) {
-        request.grant();
+        if (request.types.length == 1 &&
+            request.types.contains(WebViewPermissionResourceType.camera)) {
+          request.grant();
+        } else {
+          request.deny();
+        }
       });
       android.setMediaPlaybackRequiresUserGesture(false);
     }
@@ -235,14 +291,21 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
         content: Row(
           children: [
             Icon(
-              _esCamaraTrasera ? Icons.camera_rear_rounded : Icons.camera_front_rounded,
+              _esCamaraTrasera
+                  ? Icons.camera_rear_rounded
+                  : Icons.camera_front_rounded,
               color: const Color(0xFF0F172A),
               size: 18,
             ),
             const SizedBox(width: 8),
             Text(
-              _esCamaraTrasera ? 'Cambiando a cámara trasera...' : 'Cambiando a cámara frontal...',
-              style: const TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.bold),
+              _esCamaraTrasera
+                  ? 'Cambiando a cámara trasera...'
+                  : 'Cambiando a cámara frontal...',
+              style: const TextStyle(
+                color: Color(0xFF0F172A),
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ],
         ),
@@ -290,7 +353,10 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
           children: [
             Icon(Icons.token_rounded, color: Color(0xFF00E5FF)),
             SizedBox(width: 10),
-            Text('Control de Créditos IA', style: TextStyle(color: Colors.white, fontSize: 17)),
+            Text(
+              'Control de Créditos IA',
+              style: TextStyle(color: Colors.white, fontSize: 17),
+            ),
           ],
         ),
         content: const Column(
@@ -299,7 +365,11 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
           children: [
             Text(
               'Transmisión en Vivo: Decart Lucy VTON 3.5',
-              style: TextStyle(color: Color(0xFF00E5FF), fontWeight: FontWeight.bold, fontSize: 14),
+              style: TextStyle(
+                color: Color(0xFF00E5FF),
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
             ),
             SizedBox(height: 12),
             Text(
@@ -308,7 +378,11 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
               '• Usa el botón "Pausar" en cualquier momento para detener el consumo.\n'
               '• Puedes verificar tu saldo y consumo en tiempo real en:\n'
               '  platform.decart.ai/dashboard',
-              style: TextStyle(color: Colors.white70, fontSize: 12.5, height: 1.4),
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 12.5,
+                height: 1.4,
+              ),
             ),
           ],
         ),
@@ -317,10 +391,15 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF00E5FF),
               foregroundColor: const Color(0xFF0F172A),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Entendido', style: TextStyle(fontWeight: FontWeight.bold)),
+            child: const Text(
+              'Entendido',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
           ),
         ],
       ),
@@ -338,7 +417,10 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
           children: [
             Icon(Icons.hourglass_bottom_rounded, color: Color(0xFFF59E0B)),
             SizedBox(width: 10),
-            Text('Tiempo Finalizado', style: TextStyle(color: Colors.white, fontSize: 18)),
+            Text(
+              'Tiempo Finalizado',
+              style: TextStyle(color: Colors.white, fontSize: 18),
+            ),
           ],
         ),
         content: const Text(
@@ -357,7 +439,9 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF00E5FF),
               foregroundColor: const Color(0xFF0F172A),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
             onPressed: () {
               Navigator.pop(ctx);
@@ -368,7 +452,10 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
               _reanudarSesion();
               _iniciarTemporizador();
             },
-            child: const Text('Extender 2 min', style: TextStyle(fontWeight: FontWeight.bold)),
+            child: const Text(
+              'Extender 2 min',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
           ),
         ],
       ),
@@ -381,9 +468,7 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
 
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => ProductoDetalleScreen(productoId: pid),
-      ),
+      MaterialPageRoute(builder: (_) => ProductoDetalleScreen(productoId: pid)),
     );
   }
 
@@ -395,13 +480,21 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthProvider>();
+    if (!auth.estaAutenticado || !auth.esCliente) {
+      return const AccesoVestidorCliente();
+    }
     return Scaffold(
       backgroundColor: const Color(0xFF0B132B),
       appBar: AppBar(
         backgroundColor: const Color(0xFF0F172A),
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20),
+          icon: const Icon(
+            Icons.arrow_back_ios_new_rounded,
+            color: Colors.white,
+            size: 20,
+          ),
           onPressed: () => Navigator.pop(context),
         ),
         title: Row(
@@ -412,7 +505,11 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
                 color: const Color(0xFF00E5FF).withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: const Icon(Icons.videocam_rounded, color: Color(0xFF00E5FF), size: 18),
+              child: const Icon(
+                Icons.videocam_rounded,
+                color: Color(0xFF00E5FF),
+                size: 18,
+              ),
             ),
             const SizedBox(width: 10),
             const Column(
@@ -420,11 +517,19 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
               children: [
                 Text(
                   'Vestidor en Vivo IA',
-                  style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 Text(
                   'Decart Lucy VTON 3.5 Realtime',
-                  style: TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontWeight: FontWeight.w500),
+                  style: TextStyle(
+                    color: Color(0xFF00E5FF),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ],
             ),
@@ -434,11 +539,15 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
           // Botón alternar cámara (Frontal / Trasera)
           IconButton(
             icon: Icon(
-              _esCamaraTrasera ? Icons.camera_rear_rounded : Icons.camera_front_rounded,
+              _esCamaraTrasera
+                  ? Icons.camera_rear_rounded
+                  : Icons.camera_front_rounded,
               color: const Color(0xFF00E5FF),
               size: 20,
             ),
-            tooltip: _esCamaraTrasera ? 'Cambiar a cámara frontal' : 'Cambiar a cámara trasera',
+            tooltip: _esCamaraTrasera
+                ? 'Cambiar a cámara frontal'
+                : 'Cambiar a cámara trasera',
             onPressed: _cambiarCamara,
           ),
           // Contador de protección de créditos y estado
@@ -453,22 +562,30 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
                     : const Color(0xFF10B981).withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: _sesionPausada ? const Color(0xFFF59E0B) : const Color(0xFF10B981),
+                  color: _sesionPausada
+                      ? const Color(0xFFF59E0B)
+                      : const Color(0xFF10B981),
                   width: 1.2,
                 ),
               ),
               child: Row(
                 children: [
                   Icon(
-                    _sesionPausada ? Icons.pause_circle_rounded : Icons.timer_outlined,
-                    color: _sesionPausada ? const Color(0xFFF59E0B) : const Color(0xFF10B981),
+                    _sesionPausada
+                        ? Icons.pause_circle_rounded
+                        : Icons.timer_outlined,
+                    color: _sesionPausada
+                        ? const Color(0xFFF59E0B)
+                        : const Color(0xFF10B981),
                     size: 14,
                   ),
                   const SizedBox(width: 5),
                   Text(
                     _formatearTiempo(_segundosRestantes),
                     style: TextStyle(
-                      color: _sesionPausada ? const Color(0xFFF59E0B) : const Color(0xFF10B981),
+                      color: _sesionPausada
+                          ? const Color(0xFFF59E0B)
+                          : const Color(0xFF10B981),
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
                     ),
@@ -490,7 +607,9 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
                   color: Colors.black,
                   borderRadius: BorderRadius.circular(24),
                   border: Border.all(
-                    color: _sesionPausada ? Colors.white12 : const Color(0xFF00E5FF).withValues(alpha: 0.6),
+                    color: _sesionPausada
+                        ? Colors.white12
+                        : const Color(0xFF00E5FF).withValues(alpha: 0.6),
                     width: 1.5,
                   ),
                   boxShadow: [
@@ -518,16 +637,24 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              CircularProgressIndicator(color: Color(0xFF00E5FF)),
+                              CircularProgressIndicator(
+                                color: Color(0xFF00E5FF),
+                              ),
                               SizedBox(height: 16),
                               Text(
                                 'Iniciando cámara y Decart Lucy 3.5...',
-                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                               SizedBox(height: 6),
                               Text(
                                 'Conectando streaming en tiempo real a 30 FPS',
-                                style: TextStyle(color: Colors.white60, fontSize: 12),
+                                style: TextStyle(
+                                  color: Colors.white60,
+                                  fontSize: 12,
+                                ),
                               ),
                             ],
                           ),
@@ -535,8 +662,7 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
                       ),
 
                     // 3. Vista de Permiso Denegado
-                    if (_permisoDenegado)
-                      _buildPermisoDenegadoView(),
+                    if (_permisoDenegado) _buildPermisoDenegadoView(),
 
                     // 4. Mensaje de Error
                     if (_errorMensaje != null)
@@ -547,12 +673,19 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              const Icon(Icons.error_outline_rounded, color: Colors.redAccent, size: 48),
+                              const Icon(
+                                Icons.error_outline_rounded,
+                                color: Colors.redAccent,
+                                size: 48,
+                              ),
                               const SizedBox(height: 14),
                               Text(
                                 _errorMensaje!,
                                 textAlign: TextAlign.center,
-                                style: const TextStyle(color: Colors.white, fontSize: 13),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                ),
                               ),
                               const SizedBox(height: 18),
                               ElevatedButton.icon(
@@ -580,23 +713,33 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
                           GestureDetector(
                             onTap: _cambiarCamara,
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 7,
+                              ),
                               decoration: BoxDecoration(
-                                color: const Color(0xFF0F172A).withValues(alpha: 0.85),
+                                color: const Color(0xFF0F172A)
+                                    .withValues(alpha: 0.85),
                                 borderRadius: BorderRadius.circular(16),
                                 border: Border.all(
-                                  color: const Color(0xFF00E5FF).withValues(alpha: 0.6),
+                                  color: const Color(0xFF00E5FF)
+                                      .withValues(alpha: 0.6),
                                   width: 1.2,
                                 ),
                                 boxShadow: const [
-                                  BoxShadow(color: Colors.black45, blurRadius: 8),
+                                  BoxShadow(
+                                    color: Colors.black45,
+                                    blurRadius: 8,
+                                  ),
                                 ],
                               ),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Icon(
-                                    _esCamaraTrasera ? Icons.camera_rear_rounded : Icons.camera_front_rounded,
+                                    _esCamaraTrasera
+                                        ? Icons.camera_rear_rounded
+                                        : Icons.camera_front_rounded,
                                     color: const Color(0xFF00E5FF),
                                     size: 16,
                                   ),
@@ -616,35 +759,53 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
                           const SizedBox(width: 8),
                           // Botón Pausar / Reanudar
                           GestureDetector(
-                            onTap: _sesionPausada ? _reanudarSesion : _pausarSesion,
+                            onTap: _sesionPausada
+                                ? _reanudarSesion
+                                : _pausarSesion,
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 7,
+                              ),
                               decoration: BoxDecoration(
                                 color: _sesionPausada
-                                    ? const Color(0xFF00E5FF).withValues(alpha: 0.25)
-                                    : const Color(0xFFF59E0B).withValues(alpha: 0.25),
+                                    ? const Color(0xFF00E5FF)
+                                          .withValues(alpha: 0.25)
+                                    : const Color(0xFFF59E0B)
+                                          .withValues(alpha: 0.25),
                                 borderRadius: BorderRadius.circular(16),
                                 border: Border.all(
-                                  color: _sesionPausada ? const Color(0xFF00E5FF) : const Color(0xFFF59E0B),
+                                  color: _sesionPausada
+                                      ? const Color(0xFF00E5FF)
+                                      : const Color(0xFFF59E0B),
                                   width: 1.2,
                                 ),
                                 boxShadow: const [
-                                  BoxShadow(color: Colors.black45, blurRadius: 8),
+                                  BoxShadow(
+                                    color: Colors.black45,
+                                    blurRadius: 8,
+                                  ),
                                 ],
                               ),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Icon(
-                                    _sesionPausada ? Icons.play_arrow_rounded : Icons.pause_rounded,
-                                    color: _sesionPausada ? const Color(0xFF00E5FF) : const Color(0xFFF59E0B),
+                                    _sesionPausada
+                                        ? Icons.play_arrow_rounded
+                                        : Icons.pause_rounded,
+                                    color: _sesionPausada
+                                        ? const Color(0xFF00E5FF)
+                                        : const Color(0xFFF59E0B),
                                     size: 16,
                                   ),
                                   const SizedBox(width: 5),
                                   Text(
                                     _sesionPausada ? 'Reanudar' : 'Pausar',
                                     style: TextStyle(
-                                      color: _sesionPausada ? const Color(0xFF00E5FF) : const Color(0xFFF59E0B),
+                                      color: _sesionPausada
+                                          ? const Color(0xFF00E5FF)
+                                          : const Color(0xFFF59E0B),
                                       fontWeight: FontWeight.bold,
                                       fontSize: 12,
                                     ),
@@ -680,11 +841,19 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.videocam_off_rounded, color: Color(0xFFF59E0B), size: 52),
+            const Icon(
+              Icons.videocam_off_rounded,
+              color: Color(0xFFF59E0B),
+              size: 52,
+            ),
             const SizedBox(height: 14),
             const Text(
               'Permiso de Cámara Requerido',
-              style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 17,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             const SizedBox(height: 8),
             const Text(
@@ -697,17 +866,28 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF00E5FF),
                 foregroundColor: const Color(0xFF0F172A),
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 12,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
               ),
               icon: const Icon(Icons.lock_open_rounded),
-              label: const Text('Conceder Permiso Ahora', style: TextStyle(fontWeight: FontWeight.bold)),
+              label: const Text(
+                'Conceder Permiso Ahora',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
               onPressed: _iniciarTodo,
             ),
             const SizedBox(height: 10),
             TextButton(
               onPressed: () => openAppSettings(),
-              child: const Text('Abrir Ajustes de la App', style: TextStyle(color: Colors.white54)),
+              child: const Text(
+                'Abrir Ajustes de la App',
+                style: TextStyle(color: Colors.white54),
+              ),
             ),
           ],
         ),
@@ -719,7 +899,12 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
     if (_cargandoCatalogo) {
       return const SizedBox(
         height: 80,
-        child: Center(child: CircularProgressIndicator(color: Color(0xFF00E5FF), strokeWidth: 2)),
+        child: Center(
+          child: CircularProgressIndicator(
+            color: Color(0xFF00E5FF),
+            strokeWidth: 2,
+          ),
+        ),
       );
     }
 
@@ -737,7 +922,11 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
             children: [
               const Text(
                 'Elige la prenda a probar en vivo:',
-                style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               Text(
                 '${_prendas.length} disponibles',
@@ -754,7 +943,9 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
               separatorBuilder: (_, _) => const SizedBox(width: 10),
               itemBuilder: (context, index) {
                 final prenda = _prendas[index];
-                final isSelected = _prendaSeleccionada?['producto_id'] == prenda['producto_id'];
+                final isSelected =
+                    _prendaSeleccionada?['producto_id'] ==
+                    prenda['producto_id'];
                 final imgUrl = prenda['imagen_url'] as String?;
 
                 return GestureDetector(
@@ -766,13 +957,16 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
                       color: const Color(0xFF1E293B),
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
-                        color: isSelected ? const Color(0xFF00E5FF) : Colors.white12,
+                        color: isSelected
+                            ? const Color(0xFF00E5FF)
+                            : Colors.white12,
                         width: isSelected ? 2.5 : 1,
                       ),
                       boxShadow: isSelected
                           ? [
                               BoxShadow(
-                                color: const Color(0xFF00E5FF).withValues(alpha: 0.35),
+                                color: const Color(0xFF00E5FF)
+                                    .withValues(alpha: 0.35),
                                 blurRadius: 10,
                                 spreadRadius: 1,
                               ),
@@ -788,12 +982,20 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
                             imgUrl,
                             fit: BoxFit.cover,
                             errorBuilder: (_, _, _) => const Center(
-                              child: Icon(Icons.checkroom, color: Colors.white24, size: 28),
+                              child: Icon(
+                                Icons.checkroom,
+                                color: Colors.white24,
+                                size: 28,
+                              ),
                             ),
                           )
                         else
                           const Center(
-                            child: Icon(Icons.checkroom, color: Colors.white24, size: 28),
+                            child: Icon(
+                              Icons.checkroom,
+                              color: Colors.white24,
+                              size: 28,
+                            ),
                           ),
                         if (isSelected)
                           Positioned(
@@ -805,7 +1007,11 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
                                 color: Color(0xFF00E5FF),
                                 shape: BoxShape.circle,
                               ),
-                              child: const Icon(Icons.check, size: 10, color: Color(0xFF0F172A)),
+                              child: const Icon(
+                                Icons.check,
+                                size: 10,
+                                color: Color(0xFF0F172A),
+                              ),
                             ),
                           ),
                       ],
@@ -841,7 +1047,11 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
                   nombre,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
                 ),
                 const SizedBox(height: 2),
                 Text(
@@ -861,11 +1071,16 @@ class _VestidorEnVivoScreenState extends State<VestidorEnVivoScreen> {
               backgroundColor: const Color(0xFF10B981),
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
               elevation: 2,
             ),
             icon: const Icon(Icons.shopping_bag_outlined, size: 18),
-            label: const Text('Reservar', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            label: const Text(
+              'Reservar',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
             onPressed: _reservarPrenda,
           ),
         ],

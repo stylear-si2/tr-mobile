@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
+
+import '../storage/cache_consultas.dart';
 
 import '../constants/api_constants.dart';
 import '../session/contexto_sesion.dart';
@@ -12,6 +14,14 @@ import 'api_exceptions.dart';
 class ApiClient {
   ApiClient._();
   static http.Client client = http.Client();
+  static bool soloLocal = false;
+  static final usandoCache = ValueNotifier<bool>(false);
+  static String get _ambitoCache {
+    final roles = _contexto.usuario?.roles.toList() ?? <String>[];
+    roles.sort();
+    return '${_contexto.empresa?.id}:${_contexto.usuario?.id}:${roles.join(',')}';
+  }
+
   static final _contexto = ContextoSesion.instance;
   static final cambiosPlan = StreamController<int>.broadcast();
 
@@ -190,18 +200,43 @@ class ApiClient {
     bool withAuth = true,
   }) async {
     final generacion = _contexto.generacion;
-    final response = await _solicitar(
-      metodo,
-      url,
-      body: body,
-      withAuth: withAuth,
-    );
-    validarGeneracion(generacion);
-    final resultado = procesarRespuesta(
-      response,
-      withAuth: withAuth,
-      propia: esApi(Uri.parse(url)),
-    );
+    final ambito = _ambitoCache;
+    final cacheable =
+        metodo == 'GET' &&
+        esApi(Uri.parse(url)) &&
+        CacheConsultas.admite(Uri.parse(url));
+    dynamic resultado;
+    try {
+      if (soloLocal) {
+        throw ApiException(
+          'Sin conexión: esta acción requiere acceso al servidor.',
+        );
+      }
+      final response = await _solicitar(
+        metodo,
+        url,
+        body: body,
+        withAuth: withAuth,
+      );
+      validarGeneracion(generacion);
+      resultado = procesarRespuesta(
+        response,
+        withAuth: withAuth,
+        propia: esApi(Uri.parse(url)),
+      );
+      if (cacheable) {
+        unawaited(CacheConsultas.guardar(ambito, url, resultado));
+        validarGeneracion(generacion);
+        usandoCache.value = false;
+      }
+    } on ApiException catch (error) {
+      if (!cacheable || error.statusCode != null) rethrow;
+      final guardado = await CacheConsultas.leer(ambito, url);
+      validarGeneracion(generacion);
+      if (guardado == null) rethrow;
+      usandoCache.value = true;
+      resultado = guardado['datos'];
+    }
     if (!['GET', 'HEAD', 'OPTIONS'].contains(metodo.toUpperCase()) &&
         esApi(Uri.parse(url)) &&
         RegExp(

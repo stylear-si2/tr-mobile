@@ -1,3 +1,5 @@
+import 'core/network/api_client.dart';
+
 import 'dart:async';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -82,6 +84,8 @@ class StyleARApp extends StatelessWidget {
                     : auth.accesoOffline != null
                     ? AccesoOfflineScreen(
                         sesion: auth.accesoOffline!,
+                        contenido: const _TiendaSesion(),
+                        alDesbloquear: auth.abrirVistaOffline,
                         reconectar: auth.inicializar,
                         salir: auth.cerrarAccesoOffline,
                       )
@@ -239,7 +243,7 @@ class _TiendaSesionState extends State<_TiendaSesion>
                   ),
                   if (sesion != null)
                     IconButton(
-                      tooltip: 'Operaciones offline',
+                      tooltip: 'Solicitudes pendientes y sincronización',
                       icon: const Icon(Icons.cloud_off_outlined),
                       onPressed: () => Navigator.of(context).push(
                         MaterialPageRoute<void>(
@@ -256,6 +260,22 @@ class _TiendaSesionState extends State<_TiendaSesion>
               ),
             ),
           ),
+        ),
+        ValueListenableBuilder<bool>(
+          valueListenable: ApiClient.usandoCache,
+          builder: (context, local, _) => local
+              ? MaterialBanner(
+                  content: const Text(
+                    'Sin conexión: mostrando datos guardados. Stock y precios sujetos a verificación.',
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: auth.inicializar,
+                      child: const Text('Reconectar'),
+                    ),
+                  ],
+                )
+              : const SizedBox.shrink(),
         ),
         const Expanded(child: MainNavigationScreen()),
       ],

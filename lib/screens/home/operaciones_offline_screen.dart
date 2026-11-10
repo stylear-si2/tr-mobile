@@ -11,7 +11,11 @@ import '../../core/storage/sesion_offline.dart';
 import '../../services/sincronizacion_offline.dart';
 
 class AccesoOfflineScreen extends StatefulWidget {
+  final Widget? contenido;
+  final Future<void> Function()? alDesbloquear;
   const AccesoOfflineScreen({
+    this.contenido,
+    this.alDesbloquear,
     super.key,
     required this.sesion,
     required this.reconectar,
@@ -37,7 +41,10 @@ class _AccesoOfflineScreenState extends State<AccesoOfflineScreen> {
   void initState() {
     super.initState();
     _vencimiento = Timer(widget.sesion.vence.difference(DateTime.now()), () {
-      if (mounted) setState(() => _desbloqueado = false);
+      if (mounted) {
+        setState(() => _desbloqueado = false);
+        unawaited(widget.salir());
+      }
     });
     _conexion = Connectivity().onConnectivityChanged.listen((estado) {
       if (_desbloqueado && !estado.contains(ConnectivityResult.none)) {
@@ -64,6 +71,7 @@ class _AccesoOfflineScreenState extends State<AccesoOfflineScreen> {
     });
     try {
       final ok = await SesionOffline.desbloquear();
+      if (ok && widget.sesion.vigente) await widget.alDesbloquear?.call();
       if (mounted && widget.sesion.vigente) setState(() => _desbloqueado = ok);
     } on Exception {
       if (mounted) {
@@ -84,6 +92,7 @@ class _AccesoOfflineScreenState extends State<AccesoOfflineScreen> {
   @override
   Widget build(BuildContext context) {
     if (_desbloqueado && widget.sesion.vigente) {
+      if (widget.contenido != null) return widget.contenido!;
       return OperacionesOfflineScreen(
         sesion: widget.sesion,
         soloLocal: true,

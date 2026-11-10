@@ -1,5 +1,13 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import '../../core/session/contexto_sesion.dart';
+import 'acceso_vestidor_cliente.dart';
+import 'services/guardar_foto_vestidor.dart';
+
 import 'dart:async';
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
@@ -21,7 +29,10 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
   final ImagePicker _picker = ImagePicker();
 
   File? _imagenUsuario;
-  String? _imagenResultadoUrl;
+  Uint8List? _imagenResultado;
+  bool _guardandoFoto = false;
+  int _revisionFoto = 0;
+  late final int _generacionSesion;
   bool _procesando = false;
   String _estadoProceso = '';
 
@@ -44,7 +55,9 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
       return _prendas.where((p) {
         final tipo = (p['tipo_prenda'] ?? '').toString().toUpperCase();
         final nom = (p['nombre'] ?? '').toString().toLowerCase();
-        return tipo == 'INFERIOR' || nom.contains('jean') || nom.contains('pant');
+        return tipo == 'INFERIOR' ||
+            nom.contains('jean') ||
+            nom.contains('pant');
       }).toList();
     }
     return _prendas;
@@ -53,7 +66,64 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
   @override
   void initState() {
     super.initState();
+    _generacionSesion = ContextoSesion.instance.generacion;
+    ContextoSesion.instance.addListener(_cambioSesion);
     _cargarPrendas();
+  }
+
+  void _cambioSesion() {
+    if (!mounted || ContextoSesion.instance.generacion == _generacionSesion) {
+      return;
+    }
+    _revisionFoto++;
+    setState(() {
+      _imagenResultado = null;
+      _imagenUsuario = null;
+      _procesando = false;
+    });
+    Navigator.of(context).maybePop();
+  }
+
+  @override
+  void dispose() {
+    _revisionFoto++;
+    _imagenResultado = null;
+    ContextoSesion.instance.removeListener(_cambioSesion);
+    super.dispose();
+  }
+
+  Future<void> _guardarFoto() async {
+    final foto = _imagenResultado;
+    if (foto == null ||
+        _guardandoFoto ||
+        !context.read<AuthProvider>().esCliente) {
+      return;
+    }
+    setState(() => _guardandoFoto = true);
+    try {
+      final guardada = await GuardarFotoVestidor.guardar(foto);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              guardada
+                  ? 'Foto guardada en el destino elegido del teléfono.'
+                  : 'Guardado cancelado.',
+            ),
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No se pudo guardar la foto. Intenta nuevamente.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _guardandoFoto = false);
+    }
   }
 
   Future<void> _cargarPrendas() async {
@@ -69,9 +139,13 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
               orElse: () => items.first,
             );
             _prendaSeleccionada = inicial;
-            final tipo = (inicial['tipo_prenda'] ?? '').toString().toUpperCase();
+            final tipo = (inicial['tipo_prenda'] ?? '')
+                .toString()
+                .toUpperCase();
             final nom = (inicial['nombre'] ?? '').toString().toLowerCase();
-            if (tipo == 'INFERIOR' || nom.contains('jean') || nom.contains('pant')) {
+            if (tipo == 'INFERIOR' ||
+                nom.contains('jean') ||
+                nom.contains('pant')) {
               _filtroCategoria = 'INFERIOR';
             } else if (tipo == 'SUPERIOR') {
               _filtroCategoria = 'SUPERIOR';
@@ -98,7 +172,7 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
       if (picked != null) {
         setState(() {
           _imagenUsuario = File(picked.path);
-          _imagenResultadoUrl = null;
+          _imagenResultado = null;
           _mostrarOriginal = false;
         });
       }
@@ -115,11 +189,16 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
     if (_imagenUsuario == null || _prendaSeleccionada == null) return;
 
     final auth = Provider.of<AuthProvider>(context, listen: false);
+    if (!auth.estaAutenticado || !auth.esCliente) return;
+    final revision = ++_revisionFoto;
     final productoId = _prendaSeleccionada!['producto_id'] as int;
 
-    final tipo = (_prendaSeleccionada!['tipo_prenda'] ?? '').toString().toUpperCase();
+    final tipo = (_prendaSeleccionada!['tipo_prenda'] ?? '')
+        .toString()
+        .toUpperCase();
     final nom = (_prendaSeleccionada!['nombre'] ?? '').toString().toLowerCase();
-    final bool esInferior = tipo == 'INFERIOR' || nom.contains('jean') || nom.contains('pant');
+    final bool esInferior =
+        tipo == 'INFERIOR' || nom.contains('jean') || nom.contains('pant');
 
     setState(() {
       _procesando = true;
@@ -142,7 +221,8 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
               ? 'Ajustando proporción del pantalón de cintura a tobillos...'
               : 'Generando caída textil y adaptando torso con IA...';
         } else if (t.tick == 3) {
-          _estadoProceso = 'Sintetizando iluminación y sombras fotorrealistas...';
+          _estadoProceso =
+              'Sintetizando iluminación y sombras fotorrealistas...';
         } else {
           _estadoProceso = 'Finalizando renderizado de alta definición...';
         }
@@ -154,15 +234,22 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
         imagen: _imagenUsuario!,
         productoId: productoId,
         talla: _tallaSeleccionada,
-        clienteId: auth.usuario?.id,
       );
 
       ticker.cancel();
       if (!mounted) return;
 
-      final url = resultado['imagen_resultado_url'] as String?;
+      if (revision != _revisionFoto ||
+          ContextoSesion.instance.generacion != _generacionSesion) {
+        return;
+      }
+      final codificada = resultado['imagen_resultado_base64'] as String?;
+      if (codificada == null || codificada.isEmpty) {
+        throw const FormatException('El servidor no devolvió una imagen.');
+      }
+      final foto = base64Decode(codificada);
       setState(() {
-        _imagenResultadoUrl = url;
+        _imagenResultado = foto;
         _procesando = false;
         _mostrarOriginal = false;
       });
@@ -171,8 +258,8 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
         SnackBar(
           content: Text(
             esInferior
-                ? '¡Pantalón ajustado anatómicamente a tus piernas sin alterar el torso!'
-                : '¡Prenda adaptada con IA preservando tu rostro al 100%!',
+                ? 'Prueba del pantalón lista. Puedes comparar o guardar el resultado.'
+                : 'Prueba lista. Puedes comparar o guardar el resultado.',
           ),
           backgroundColor: const Color(0xFF10B981),
           behavior: SnackBarBehavior.floating,
@@ -181,6 +268,7 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
     } catch (e) {
       ticker.cancel();
       if (!mounted) return;
+      if (revision != _revisionFoto) return;
       setState(() => _procesando = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -196,14 +284,16 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
     final id = _prendaSeleccionada!['producto_id'] as int;
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => ProductoDetalleScreen(productoId: id),
-      ),
+      MaterialPageRoute(builder: (_) => ProductoDetalleScreen(productoId: id)),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthProvider>();
+    if (!auth.estaAutenticado || !auth.esCliente) {
+      return const AccesoVestidorCliente();
+    }
     return Scaffold(
       backgroundColor: const Color(0xFF0F172A),
       appBar: AppBar(
@@ -215,7 +305,11 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
             SizedBox(width: 8),
             Text(
               'Probador IA Virtual',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white),
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+                color: Colors.white,
+              ),
             ),
           ],
         ),
@@ -227,7 +321,7 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
               onPressed: () {
                 setState(() {
                   _imagenUsuario = null;
-                  _imagenResultadoUrl = null;
+                  _imagenResultado = null;
                 });
               },
             ),
@@ -239,7 +333,10 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
             // Visor Central
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
                 child: _buildVisorPrincipal(),
               ),
             ),
@@ -272,18 +369,30 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
                 color: const Color(0xFF00E5FF).withValues(alpha: 0.12),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.camera_front_rounded, size: 56, color: Color(0xFF00E5FF)),
+              child: const Icon(
+                Icons.camera_front_rounded,
+                size: 56,
+                color: Color(0xFF00E5FF),
+              ),
             ),
             const SizedBox(height: 20),
             const Text(
               'Estudio de Moda Inteligente',
-              style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 8),
             const Text(
               'Toma una foto de cuerpo entero o selecciona una de tu galería para probarte la ropa con IA.',
-              style: TextStyle(color: Colors.white60, fontSize: 13, height: 1.4),
+              style: TextStyle(
+                color: Colors.white60,
+                fontSize: 13,
+                height: 1.4,
+              ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 28),
@@ -295,10 +404,15 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
                       backgroundColor: const Color(0xFF00E5FF),
                       foregroundColor: const Color(0xFF0F172A),
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
                     ),
                     icon: const Icon(Icons.camera_alt_rounded),
-                    label: const Text('Tomar Foto', style: TextStyle(fontWeight: FontWeight.bold)),
+                    label: const Text(
+                      'Tomar Foto',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
                     onPressed: () => _seleccionarImagen(ImageSource.camera),
                   ),
                 ),
@@ -309,10 +423,15 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
                       foregroundColor: Colors.white,
                       side: const BorderSide(color: Colors.white24),
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
                     ),
                     icon: const Icon(Icons.photo_library_rounded),
-                    label: const Text('Galería', style: TextStyle(fontWeight: FontWeight.bold)),
+                    label: const Text(
+                      'Galería',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
                     onPressed: () => _seleccionarImagen(ImageSource.gallery),
                   ),
                 ),
@@ -344,7 +463,7 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
     }
 
     // 2. Si hay foto (procesando, con resultado o lista para procesar)
-    final mostrarUrl = (_imagenResultadoUrl != null && !_mostrarOriginal);
+    final mostrarUrl = (_imagenResultado != null && !_mostrarOriginal);
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(24),
@@ -353,23 +472,12 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
         children: [
           // Imagen (Original o Resultado IA)
           mostrarUrl
-              ? Image.network(
-                  _imagenResultadoUrl!,
+              ? Image.memory(
+                  _imagenResultado!,
                   fit: BoxFit.cover,
-                  loadingBuilder: (ctx, child, progress) {
-                    if (progress == null) return child;
-                    return Container(
-                      color: const Color(0xFF1E293B),
-                      child: const Center(
-                        child: CircularProgressIndicator(color: Color(0xFF00E5FF)),
-                      ),
-                    );
-                  },
+                  gaplessPlayback: true,
                 )
-              : Image.file(
-                  _imagenUsuario!,
-                  fit: BoxFit.cover,
-                ),
+              : Image.file(_imagenUsuario!, fit: BoxFit.cover),
 
           // Gradiente superior sutil
           Positioned(
@@ -382,7 +490,10 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [Colors.black.withValues(alpha: 0.6), Colors.transparent],
+                  colors: [
+                    Colors.black.withValues(alpha: 0.6),
+                    Colors.transparent,
+                  ],
                 ),
               ),
             ),
@@ -398,7 +509,9 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
                 color: Colors.black.withValues(alpha: 0.7),
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
-                  color: _imagenResultadoUrl != null ? const Color(0xFF10B981) : const Color(0xFF00E5FF),
+                  color: _imagenResultado != null
+                      ? const Color(0xFF10B981)
+                      : const Color(0xFF00E5FF),
                   width: 1.2,
                 ),
               ),
@@ -406,16 +519,26 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(
-                    _imagenResultadoUrl != null ? Icons.verified : Icons.photo_camera_back,
-                    color: _imagenResultadoUrl != null ? const Color(0xFF10B981) : const Color(0xFF00E5FF),
+                    _imagenResultado != null
+                        ? Icons.verified
+                        : Icons.photo_camera_back,
+                    color: _imagenResultado != null
+                        ? const Color(0xFF10B981)
+                        : const Color(0xFF00E5FF),
                     size: 14,
                   ),
                   const SizedBox(width: 6),
                   Text(
-                    _imagenResultadoUrl != null
-                        ? (_mostrarOriginal ? 'Foto Original' : 'Ajuste IA • StyleAR')
+                    _imagenResultado != null
+                        ? (_mostrarOriginal
+                              ? 'Foto Original'
+                              : 'Ajuste IA • StyleAR')
                         : 'Foto Cargada',
-                    style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ],
               ),
@@ -423,7 +546,7 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
           ),
 
           // Botón Comparador Antes / Después (si ya hay resultado)
-          if (_imagenResultadoUrl != null)
+          if (_imagenResultado != null)
             Positioned(
               top: 12,
               right: 12,
@@ -432,7 +555,10 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
                 onTapUp: (_) => setState(() => _mostrarOriginal = false),
                 onTapCancel: () => setState(() => _mostrarOriginal = false),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.black.withValues(alpha: 0.75),
                     borderRadius: BorderRadius.circular(20),
@@ -441,11 +567,19 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
                   child: const Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.compare_arrows_rounded, color: Colors.white, size: 16),
+                      Icon(
+                        Icons.compare_arrows_rounded,
+                        color: Colors.white,
+                        size: 16,
+                      ),
                       SizedBox(width: 6),
                       Text(
                         'Mantén para comparar',
-                        style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ],
                   ),
@@ -472,7 +606,11 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
                     const SizedBox(height: 20),
                     Text(
                       _estadoProceso,
-                      style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 6),
@@ -507,7 +645,11 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
             children: [
               const Text(
                 'Prendas 3D Disponibles',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
               ),
               // Selector de Talla
               Container(
@@ -523,15 +665,22 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
                     return GestureDetector(
                       onTap: () => setState(() => _tallaSeleccionada = t),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
-                          color: selected ? const Color(0xFF00E5FF) : Colors.transparent,
+                          color: selected
+                              ? const Color(0xFF00E5FF)
+                              : Colors.transparent,
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
                           t,
                           style: TextStyle(
-                            color: selected ? const Color(0xFF0F172A) : Colors.white60,
+                            color: selected
+                                ? const Color(0xFF0F172A)
+                                : Colors.white60,
                             fontWeight: FontWeight.bold,
                             fontSize: 11,
                           ),
@@ -559,12 +708,17 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
 
           // Carrusel horizontal de prendas
           if (_cargandoCatalogo)
-            const Center(child: CircularProgressIndicator(color: Color(0xFF00E5FF)))
+            const Center(
+              child: CircularProgressIndicator(color: Color(0xFF00E5FF)),
+            )
           else if (_prendasFiltradas.isEmpty)
             const SizedBox(
               height: 80,
               child: Center(
-                child: Text('No hay prendas en esta categoría.', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                child: Text(
+                  'No hay prendas en esta categoría.',
+                  style: TextStyle(color: Colors.white54, fontSize: 12),
+                ),
               ),
             )
           else
@@ -576,16 +730,22 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
                 separatorBuilder: (context, index) => const SizedBox(width: 10),
                 itemBuilder: (ctx, i) {
                   final p = _prendasFiltradas[i];
-                  final isSelected = _prendaSeleccionada?['producto_id'] == p['producto_id'];
-                  final tipo = (p['tipo_prenda'] ?? '').toString().toUpperCase();
+                  final isSelected =
+                      _prendaSeleccionada?['producto_id'] == p['producto_id'];
+                  final tipo = (p['tipo_prenda'] ?? '')
+                      .toString()
+                      .toUpperCase();
                   final nom = (p['nombre'] ?? '').toString().toLowerCase();
-                  final esInferior = tipo == 'INFERIOR' || nom.contains('jean') || nom.contains('pant');
+                  final esInferior =
+                      tipo == 'INFERIOR' ||
+                      nom.contains('jean') ||
+                      nom.contains('pant');
 
                   return GestureDetector(
                     onTap: () {
                       setState(() {
                         _prendaSeleccionada = p;
-                        _imagenResultadoUrl = null; // Reiniciar para nueva prueba
+                        _imagenResultado = null; // Reiniciar para nueva prueba
                       });
                     },
                     child: Container(
@@ -597,7 +757,9 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
                             : Colors.white.withValues(alpha: 0.05),
                         borderRadius: BorderRadius.circular(16),
                         border: Border.all(
-                          color: isSelected ? const Color(0xFF00E5FF) : Colors.transparent,
+                          color: isSelected
+                              ? const Color(0xFF00E5FF)
+                              : Colors.transparent,
                           width: 1.5,
                         ),
                       ),
@@ -610,12 +772,16 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
                               width: 50,
                               height: 68,
                               fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) => Container(
-                                width: 50,
-                                height: 68,
-                                color: Colors.black26,
-                                child: const Icon(Icons.checkroom, color: Colors.white54),
-                              ),
+                              errorBuilder: (context, error, stackTrace) =>
+                                  Container(
+                                    width: 50,
+                                    height: 68,
+                                    color: Colors.black26,
+                                    child: const Icon(
+                                      Icons.checkroom,
+                                      color: Colors.white54,
+                                    ),
+                                  ),
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -627,17 +793,26 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
                                 Row(
                                   children: [
                                     Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 4,
+                                        vertical: 1,
+                                      ),
                                       decoration: BoxDecoration(
                                         color: esInferior
-                                            ? Colors.orangeAccent.withValues(alpha: 0.2)
-                                            : Colors.blueAccent.withValues(alpha: 0.2),
+                                            ? Colors.orangeAccent.withValues(
+                                                alpha: 0.2,
+                                              )
+                                            : Colors.blueAccent.withValues(
+                                                alpha: 0.2,
+                                              ),
                                         borderRadius: BorderRadius.circular(4),
                                       ),
                                       child: Text(
                                         esInferior ? 'BOTTOM' : 'TOP',
                                         style: TextStyle(
-                                          color: esInferior ? Colors.orangeAccent : Colors.lightBlueAccent,
+                                          color: esInferior
+                                              ? Colors.orangeAccent
+                                              : Colors.lightBlueAccent,
                                           fontSize: 8,
                                           fontWeight: FontWeight.bold,
                                         ),
@@ -668,7 +843,10 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
                                 const SizedBox(height: 1),
                                 Text(
                                   p['tipo_corte'] ?? 'REGULAR',
-                                  style: const TextStyle(color: Colors.white38, fontSize: 9),
+                                  style: const TextStyle(
+                                    color: Colors.white38,
+                                    fontSize: 9,
+                                  ),
                                 ),
                               ],
                             ),
@@ -682,8 +860,25 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
             ),
           const SizedBox(height: 16),
 
+          if (_imagenResultado != null) ...[
+            OutlinedButton.icon(
+              onPressed: _guardandoFoto ? null : _guardarFoto,
+              icon: const Icon(Icons.save_alt, color: Colors.white),
+              label: Text(
+                _guardandoFoto ? 'Guardando...' : 'Guardar foto en el teléfono',
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: Text(
+                'El resultado solo se conserva si eliges Guardar.',
+                style: TextStyle(color: Colors.white70),
+              ),
+            ),
+          ],
           // Botones de acción final
-          if (_imagenResultadoUrl != null)
+          if (_imagenResultado != null)
             Row(
               children: [
                 Expanded(
@@ -692,11 +887,13 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
                       foregroundColor: Colors.white,
                       side: const BorderSide(color: Colors.white24),
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
                     ),
                     icon: const Icon(Icons.refresh),
                     label: const Text('Otra Prenda'),
-                    onPressed: () => setState(() => _imagenResultadoUrl = null),
+                    onPressed: () => setState(() => _imagenResultado = null),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -707,10 +904,15 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
                       backgroundColor: const Color(0xFF10B981),
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
                     ),
                     icon: const Icon(Icons.shopping_bag_outlined),
-                    label: const Text('Reservar Prenda', style: TextStyle(fontWeight: FontWeight.bold)),
+                    label: const Text(
+                      'Reservar Prenda',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
                     onPressed: _irADetallePrenda,
                   ),
                 ),
@@ -724,7 +926,9 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
                   backgroundColor: const Color(0xFF00E5FF),
                   foregroundColor: const Color(0xFF0F172A),
                   padding: const EdgeInsets.symmetric(vertical: 15),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
                   elevation: 4,
                 ),
                 icon: const Icon(Icons.auto_awesome),
@@ -732,7 +936,9 @@ class _ProbadorIaScreenState extends State<ProbadorIaScreen> {
                   'Probar Prenda con IA',
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                 ),
-                onPressed: (_imagenUsuario != null && !_procesando) ? _ejecutarTryOnIA : null,
+                onPressed: (_imagenUsuario != null && !_procesando)
+                    ? _ejecutarTryOnIA
+                    : null,
               ),
             ),
         ],

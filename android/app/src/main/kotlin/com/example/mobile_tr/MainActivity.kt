@@ -12,6 +12,9 @@ import android.os.Build
 import android.provider.Settings
 
 class MainActivity : FlutterFragmentActivity() {
+    private var fotoPendiente: ByteArray? = null
+    private var resultadoFoto: MethodChannel.Result? = null
+    private val solicitudFoto = 2419
     private val canal = "stylear_transacciones_v1"
     private var puente: MethodChannel? = null
     private var pendiente: Map<String, Long>? = null
@@ -33,6 +36,27 @@ class MainActivity : FlutterFragmentActivity() {
     }
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "stylear/vestidor-fotos").setMethodCallHandler { call, result ->
+            if (call.method != "guardar") { result.notImplemented(); return@setMethodCallHandler }
+            val bytes = call.argument<ByteArray>("bytes")
+            if (bytes == null || bytes.isEmpty() || bytes.size > 10 * 1024 * 1024) {
+                result.error("IMAGEN", "La imagen no es válida", null); return@setMethodCallHandler
+            }
+            if (resultadoFoto != null) { result.error("OCUPADO", "Ya hay un guardado en curso", null); return@setMethodCallHandler }
+            fotoPendiente = bytes
+            resultadoFoto = result
+            try {
+                startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "image/jpeg"
+                    putExtra(Intent.EXTRA_LOCAL_ONLY, true)
+                    putExtra(Intent.EXTRA_TITLE, "StyleAR-vestidor-${System.currentTimeMillis()}.jpg")
+                }, solicitudFoto)
+            } catch (_: Exception) {
+                fotoPendiente = null; resultadoFoto = null
+                result.error("GUARDAR", "No se pudo abrir el selector de archivos", null)
+            }
+        }
         crearCanal()
         pendiente = referencia(intent)
         puente = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "stylear/notificaciones")
@@ -56,8 +80,10 @@ class MainActivity : FlutterFragmentActivity() {
                         .putExtra("stylear_notificacion_id", nid).putExtra("stylear_empresa_id", eid)
                     val accion = PendingIntent.getActivity(this, tag.hashCode(), abrir, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                     val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, canal) else Notification.Builder(this)
-                    val aviso = builder.setSmallIcon(R.drawable.ic_stylear_notification).setContentTitle("StyleAR")
-                        .setContentText("Tienes una actualización. Abre tu bandeja para consultarla.")
+                    val titulo = call.argument<String>("titulo")?.take(120)?.takeIf { it.isNotBlank() } ?: "StyleAR"
+                    val mensaje = call.argument<String>("mensaje")?.take(800) ?: "Abre tu bandeja para consultar el aviso."
+                    val aviso = builder.setSmallIcon(R.drawable.ic_stylear_notification).setContentTitle(titulo)
+                        .setContentText(mensaje).setStyle(Notification.BigTextStyle().bigText(mensaje))
                         .setContentIntent(accion).setAutoCancel(true).setVisibility(Notification.VISIBILITY_PRIVATE)
                         .setPriority(Notification.PRIORITY_HIGH).setCategory(Notification.CATEGORY_STATUS).build()
                     try { gestor.notify(tag, 0, aviso); result.success(null) }
@@ -65,6 +91,23 @@ class MainActivity : FlutterFragmentActivity() {
                 }
                 else -> result.notImplemented()
             }
+        }
+    }
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != solicitudFoto) return
+        val result = resultadoFoto
+        val bytes = fotoPendiente
+        fotoPendiente = null; resultadoFoto = null
+        if (result == null) return
+        val uri = data?.data
+        if (resultCode != RESULT_OK || uri == null || bytes == null) { result.success(false); return }
+        try {
+            contentResolver.openOutputStream(uri, "wt")?.use { it.write(bytes) }
+                ?: throw java.io.IOException("Archivo no disponible")
+            result.success(true)
+        } catch (_: Exception) {
+            result.error("GUARDAR", "No se pudo guardar la foto en el destino elegido", null)
         }
     }
     override fun onNewIntent(intent: Intent) {

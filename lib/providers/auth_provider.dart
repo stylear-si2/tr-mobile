@@ -60,7 +60,8 @@ class AuthProvider extends ChangeNotifier {
   String? get error => _error;
   String? get aviso => contexto.aviso;
   bool get requiereLogin => contexto.requiereLogin;
-  bool get estaAutenticado => token != null && usuario != null;
+  bool get estaAutenticado =>
+      usuario != null && (token != null || ApiClient.soloLocal);
   bool get esCliente => usuario?.esCliente ?? false;
   bool get esAdmin => usuario?.esAdmin ?? false;
   bool get esAdminSaas => usuario?.esAdminSaas ?? false;
@@ -78,9 +79,18 @@ class AuthProvider extends ChangeNotifier {
 
   void continuarVisitante() => contexto.continuarVisitante();
 
+  Future<void> abrirVistaOffline() async {
+    final local = accesoOffline;
+    if (local == null || !local.vigente) return;
+    ApiClient.soloLocal = true;
+    ApiClient.usandoCache.value = true;
+    contexto.restaurarVistaLocal(local.empresa, local.usuario);
+  }
+
   Future<void> inicializar() async {
     if (_verificando) return;
     _verificando = true;
+    ApiClient.soloLocal = false;
     var habiaSesion = false;
     SesionOffline? local;
     try {
@@ -182,6 +192,8 @@ class AuthProvider extends ChangeNotifier {
   }
 
   Future<void> cerrarAccesoOffline() async {
+    ApiClient.soloLocal = false;
+    ApiClient.usandoCache.value = false;
     accesoOffline = null;
     await contexto.cerrar(pedirLogin: true);
     await contexto.seleccionar(null);
@@ -290,6 +302,9 @@ class AuthProvider extends ChangeNotifier {
   });
 
   Future<void> logout() async {
+    accesoOffline = null;
+    ApiClient.soloLocal = false;
+    ApiClient.usandoCache.value = false;
     await FirebasePush.desvincular();
     if (token != null) {
       try {
