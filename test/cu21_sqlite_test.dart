@@ -80,4 +80,89 @@ void main() {
       expect((await reabierta.historial(ambito)).single['id'], 5);
     },
   );
+  test('compras y cambios persisten separados y conservan cotización después de reiniciar', () async {
+    final dir = await Directory.systemTemp.createTemp('stylear-offline-extra-');
+    final ruta = '${dir.path}/offline.db';
+    final db = BaseOffline(ruta);
+    await db.guardarContexto('1:2:CLIENTE', {
+      'ventas': [
+        {'venta_id': 7},
+      ],
+      'politica': {'plazo_cambios': 30},
+    });
+    await db.registrar('1:2', 'compra-a', 'COMPRA', 3, {
+      'items': [
+        {'producto_variante_id': 8, 'cantidad': 3, 'precio_centavos': 5000},
+      ],
+    });
+    await db.registrar('1:2', 'compra-b', 'COMPRA', 3, {
+      'items': [
+        {'producto_variante_id': 9, 'cantidad': 1, 'precio_centavos': 2500},
+      ],
+    });
+    await db.registrar('1:2', 'cambio-a', 'CAMBIO', 3, {
+      'venta_id': 7,
+      'cantidad': 1,
+      'motivo': 'Cambio de talla',
+    });
+    await db.confirmar('1:2', 'compra-a', 'COMPRA', {
+      'id': 0,
+      'estado': 'PENDIENTE_PAGO',
+      'total': '150.00',
+      'items': [
+        {'producto_variante_id': 8, 'cantidad': 3, 'precio_centavos': 5000},
+      ],
+    });
+    await db.cerrar();
+    final segunda = BaseOffline(ruta);
+    expect((await segunda.operaciones('1:2')).length, 3);
+    expect(
+      (await segunda.operaciones('1:2'))
+          .firstWhere((r) => r['uuid'] == 'compra-a')['resultado'],
+      contains('150.00'),
+    );
+    expect(
+      (await segunda.operaciones('1:2'))
+          .firstWhere((r) => r['uuid'] == 'compra-b')['estado'],
+      'PENDIENTE',
+    );
+    expect(await segunda.historial('1:2'), isEmpty);
+    expect((await segunda.contexto('1:2:CLIENTE'))!['ventas'], isNotEmpty);
+    expect(await segunda.contexto('2:2:CLIENTE'), isNull);
+    await segunda.cerrar();
+    await deleteDatabase(ruta);
+    await dir.delete();
+  });
+
+  test('actualiza SQLite v1 sin perder operaciones pendientes', () async {
+    final dir = await Directory.systemTemp.createTemp(
+      'stylear-offline-migracion-',
+    );
+    final ruta = '${dir.path}/offline.db';
+    final anterior = await openDatabase(
+      ruta,
+      version: 1,
+      onCreate: (db, _) async {
+        await db.execute(
+          'CREATE TABLE operacion (ambito TEXT, uuid TEXT, tipo TEXT, sucursal INTEGER, creado TEXT, datos TEXT, estado TEXT, intentos INTEGER DEFAULT 0, proximo TEXT, motivo TEXT, remoto INTEGER, efectivo_devuelto INTEGER DEFAULT 0, PRIMARY KEY(ambito,uuid))',
+        );
+        await db.insert('operacion', {
+          'ambito': '1:2',
+          'uuid': 'previa',
+          'tipo': 'RESERVA',
+          'creado': '2026-11-10',
+          'datos': '{}',
+          'estado': 'PENDIENTE',
+        });
+      },
+    );
+    await anterior.close();
+    final actual = BaseOffline(ruta);
+    expect((await actual.operaciones('1:2')).single['uuid'], 'previa');
+    await actual.guardarContexto('1:2', {'ventas': []});
+    expect(await actual.contexto('1:2'), isNotNull);
+    await actual.cerrar();
+    await deleteDatabase(ruta);
+    await dir.delete();
+  });
 }

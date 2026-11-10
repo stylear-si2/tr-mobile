@@ -85,11 +85,24 @@ class SincronizacionOffline {
       });
       try {
         ApiClient.validarGeneracion(generacion);
-        final ruta = tipo == 'VENTA' ? 'ventas-presenciales' : 'reservas';
-        final resultado = await ApiClient.post(
-          '$url/$ruta/offline',
-          body: jsonDecode(fila['datos'] as String),
-        );
+        final ruta = switch (tipo) {
+          'COMPRA' => 'pagos/offline/cotizar',
+          'CAMBIO' => 'posventa/cambios',
+          'ENTREGA_CAMBIO' =>
+            'posventa/cambios/${(jsonDecode(fila['datos'] as String) as Map)['id']}/completar',
+          'REVISION_CAMBIO' =>
+            'posventa/cambios/${(jsonDecode(fila['datos'] as String) as Map)['id']}/revision',
+          _ =>
+            '${tipo == 'VENTA' ? 'ventas-presenciales' : 'reservas'}/offline',
+        };
+        final datos =
+            jsonDecode(fila['datos'] as String) as Map<String, dynamic>;
+        if (tipo == 'REVISION_CAMBIO' || tipo == 'ENTREGA_CAMBIO') {
+          datos.remove('id');
+        }
+        final resultado = tipo == 'REVISION_CAMBIO'
+            ? await ApiClient.patch('$url/$ruta', body: datos)
+            : await ApiClient.post('$url/$ruta', body: datos);
         if (resultado is! Map<String, dynamic> || resultado['id'] is! int) {
           throw ApiException(
             'El servidor aún no devolvió un resultado verificable.',
@@ -166,7 +179,11 @@ class SincronizacionOffline {
           },
       ];
     }
+    final posventa = await ApiClient.get(
+      '$url/posventa/cambios/offline/descarga',
+    ) as Map<String, dynamic>;
     ApiClient.validarGeneracion(generacion);
+    await _base.guardarContexto(sesion.ambitoDatos, posventa);
     await _base.guardarDescarga(
       sesion.ambitoDatos,
       sucursales,

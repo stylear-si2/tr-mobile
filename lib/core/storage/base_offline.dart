@@ -9,11 +9,40 @@ class BaseOffline {
   final String? _ruta;
   late final Future<Database> _base = _abrir();
 
+  Future<Map<String, dynamic>?> contexto(String ambito) async {
+    final filas = await (await _base).query(
+      'contexto',
+      where: 'ambito=?',
+      whereArgs: [ambito],
+    );
+    return filas.isEmpty
+        ? null
+        : jsonDecode(filas.first['datos'] as String) as Map<String, dynamic>;
+  }
+
+  Future<void> guardarContexto(
+    String ambito,
+    Map<String, dynamic> datos,
+  ) async {
+    await (await _base).insert('contexto', {
+      'ambito': ambito,
+      'datos': jsonEncode(datos),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
   Future<void> cerrar() async => (await _base).close();
 
   Future<Database> _abrir() async => openDatabase(
     _ruta ?? '${await getDatabasesPath()}/stylear_cu21.db',
-    version: 1,
+    version: 2,
+    onUpgrade: (db, old, version) async {
+      if (old < 2) {
+        await db.execute('ALTER TABLE operacion ADD COLUMN resultado TEXT');
+        await db.execute(
+          'CREATE TABLE contexto (ambito TEXT PRIMARY KEY, datos TEXT NOT NULL)',
+        );
+      }
+    },
     onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
     onCreate: (db, _) async {
       await db.execute('''CREATE TABLE sucursal (
@@ -36,6 +65,10 @@ class BaseOffline {
         estado TEXT NOT NULL, intentos INTEGER NOT NULL DEFAULT 0, proximo TEXT,
         motivo TEXT, remoto INTEGER, efectivo_devuelto INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (ambito,uuid))''');
+      await db.execute('ALTER TABLE operacion ADD COLUMN resultado TEXT');
+      await db.execute(
+        'CREATE TABLE contexto (ambito TEXT PRIMARY KEY, datos TEXT NOT NULL)',
+      );
       await db.execute('CREATE INDEX cola ON operacion(ambito,estado,creado)');
     },
   );
@@ -218,10 +251,16 @@ class BaseOffline {
       final id = resultado['id'] as int;
       await txn.update(
         'operacion',
-        {'estado': 'CONFIRMADA', 'remoto': id, 'motivo': null},
+        {
+          'estado': 'CONFIRMADA',
+          'remoto': id,
+          'motivo': null,
+          'resultado': jsonEncode(resultado),
+        },
         where: 'ambito=? AND uuid=?',
         whereArgs: [ambito, uuid],
       );
+      if (tipo == 'COMPRA') return;
       await txn.insert('historial', {
         'ambito': ambitoHistorial ?? ambito,
         'tipo': tipo,
