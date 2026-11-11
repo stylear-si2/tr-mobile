@@ -1,3 +1,10 @@
+import 'cambios_offline_panel.dart';
+import '../../core/network/api_client.dart';
+import '../../core/constants/api_constants.dart';
+import '../../models/pago_models.dart';
+import '../carrito/pago_qr_screen.dart';
+import '../carrito/pago_stripe_screen.dart';
+
 import 'dart:async';
 import 'dart:convert';
 
@@ -164,6 +171,7 @@ class _OperacionesOfflineScreenState extends State<OperacionesOfflineScreen> {
   int? _sucursal;
   DateTime? _cita;
   bool _efectivo = false;
+  bool _compra = false;
   bool _guardando = false;
   bool _sincronizando = false;
   String _busqueda = '';
@@ -173,7 +181,11 @@ class _OperacionesOfflineScreenState extends State<OperacionesOfflineScreen> {
   late final StreamSubscription<void> _cambios;
 
   String get _ambito => widget.sesion.ambito;
-  String get _tipo => widget.sesion.puedeVender ? 'VENTA' : 'RESERVA';
+  String get _tipo => widget.sesion.puedeVender
+      ? 'VENTA'
+      : _compra
+      ? 'COMPRA'
+      : 'RESERVA';
   int get _total => _variantes.fold(
     0,
     (total, v) =>
@@ -264,7 +276,9 @@ class _OperacionesOfflineScreenState extends State<OperacionesOfflineScreen> {
         (widget.soloLocal && !widget.sesion.vigente)) {
       return;
     }
-    if (widget.sesion.puedeVender ? !_efectivo : _cita == null) return;
+    if (widget.sesion.puedeVender ? !_efectivo : !_compra && _cita == null) {
+      return;
+    }
     setState(() => _guardando = true);
     final datos = <String, dynamic>{
       'clave_operacion': _uuid,
@@ -275,13 +289,14 @@ class _OperacionesOfflineScreenState extends State<OperacionesOfflineScreen> {
             {
               'producto_variante_id': v['id'],
               'cantidad': _seleccion[v['id']],
-              if (widget.sesion.puedeVender) 'precio_centavos': v['precio'],
+              if (widget.sesion.puedeVender || _compra)
+                'precio_centavos': v['precio'],
             },
       ],
       if (widget.sesion.puedeVender) ...{
         'metodo_pago': 'EFECTIVO',
         'efectivo_centavos': _total,
-      } else
+      } else if (!_compra)
         'fecha_cita': DateFormat('yyyy-MM-dd').format(_cita!),
     };
     try {
@@ -368,7 +383,7 @@ class _OperacionesOfflineScreenState extends State<OperacionesOfflineScreen> {
         ],
       ),
       body: DefaultTabController(
-        length: 2,
+        length: 3,
         child: Column(
           children: [
             if (_sincronizando) const LinearProgressIndicator(),
@@ -378,6 +393,7 @@ class _OperacionesOfflineScreenState extends State<OperacionesOfflineScreen> {
               tabs: [
                 Tab(text: 'Catálogo y registro'),
                 Tab(text: 'Historial'),
+                Tab(text: 'Cambios'),
               ],
             ),
             Expanded(
@@ -395,6 +411,28 @@ class _OperacionesOfflineScreenState extends State<OperacionesOfflineScreen> {
                                   ? 'Descarga el catálogo con conexión para comenzar.'
                                   : 'Última descarga: ${DateFormat('dd/MM/yyyy HH:mm').format(fecha)}. El stock y el precio pueden haber cambiado.',
                             ),
+                            if (!widget.sesion.puedeVender)
+                              SegmentedButton<bool>(
+                                segments: const [
+                                  ButtonSegment(
+                                    value: false,
+                                    label: Text('Reservar'),
+                                  ),
+                                  ButtonSegment(
+                                    value: true,
+                                    label: Text('Comprar'),
+                                  ),
+                                ],
+                                selected: {_compra},
+                                onSelectionChanged: (v) => setState(() {
+                                  _compra = v.first;
+                                  _reiniciar();
+                                }),
+                              ),
+                            if (_compra)
+                              const Text(
+                                'Compra pendiente: al reconectar revisa el total actualizado y continúa al pago desde Historial.',
+                              ),
                             DropdownButton<int>(
                               value: _sucursal,
                               isExpanded: true,
@@ -448,7 +486,7 @@ class _OperacionesOfflineScreenState extends State<OperacionesOfflineScreen> {
                                 ? null
                                 : (v) => setState(() => _efectivo = v ?? false),
                           )
-                        else
+                        else if (!_compra)
                           OutlinedButton(
                             onPressed: _guardando ? null : _elegirFecha,
                             child: Text(
@@ -462,12 +500,14 @@ class _OperacionesOfflineScreenState extends State<OperacionesOfflineScreen> {
                               _guardando ||
                                   (widget.sesion.puedeVender
                                       ? !_efectivo
-                                      : _cita == null)
+                                      : !_compra && _cita == null)
                               ? null
                               : _guardar,
                           child: Text(
                             widget.sesion.puedeVender
                                 ? 'Guardar venta de contado'
+                                : _compra
+                                ? 'Guardar compra pendiente'
                                 : 'Guardar reserva',
                           ),
                         ),
@@ -478,14 +518,22 @@ class _OperacionesOfflineScreenState extends State<OperacionesOfflineScreen> {
                     padding: const EdgeInsets.all(16),
                     children: [
                       for (final fila in _operaciones)
-                        if (!confirmadas.contains(
-                          '${fila['tipo']}:${fila['remoto']}',
-                        ))
+                        if (fila['tipo'] == 'COMPRA' ||
+                            !confirmadas.contains(
+                              '${fila['tipo']}:${fila['remoto']}',
+                            ))
                           _operacion(fila),
                       for (final fila in _historial) _confirmada(fila),
                       if (_operaciones.isEmpty && _historial.isEmpty)
                         const Text('Aún no hay operaciones guardadas.'),
                     ],
+                  ),
+                  CambiosOfflinePanel(
+                    sesion: widget.sesion,
+                    alGuardar: () async {
+                      await _cargar();
+                      if (!widget.soloLocal) await _sincronizar();
+                    },
                   ),
                 ],
               ),
@@ -500,7 +548,7 @@ class _OperacionesOfflineScreenState extends State<OperacionesOfflineScreen> {
     final unidades = _seleccion[v['id']] ?? 0;
     final disponible = v['stock'] as int;
     final precio = v['precio'] as int?;
-    final limite = widget.sesion.puedeVender
+    final limite = widget.sesion.puedeVender || _compra
         ? disponible
         : disponible.clamp(0, 2);
     return ListTile(
@@ -535,6 +583,82 @@ class _OperacionesOfflineScreenState extends State<OperacionesOfflineScreen> {
     );
   }
 
+  Future<void> _recotizar(Map<String, Object?> fila) async {
+    if (widget.soloLocal || _guardando) return;
+    await _base.actualizar(_ambito, fila['uuid'] as String, {
+      'estado': 'PENDIENTE',
+      'resultado': null,
+      'motivo': null,
+      'proximo': null,
+    });
+    await _cargar();
+    await _sincronizar(manual: true);
+  }
+
+  Future<void> _pagarCompra(Map<String, Object?> fila, String medio) async {
+    if (widget.soloLocal || _guardando) return;
+    final resultado =
+        jsonDecode(fila['resultado'] as String) as Map<String, dynamic>;
+    final body = <String, dynamic>{
+      'clave_operacion': fila['uuid'],
+      'sucursal_id': fila['sucursal'],
+      'items_offline': resultado['items'],
+      'total_esperado': '${resultado['total']}',
+      'tipo_entrega': 'RECOJO_SUCURSAL',
+    };
+    setState(() => _guardando = true);
+    try {
+      final respuesta = await ApiClient.post(
+        '${ApiConstants.baseUrl}/pagos/$medio/checkout',
+        body: body,
+      ) as Map<String, dynamic>;
+      resultado['orden_id'] = respuesta['orden_id'];
+      resultado['medio'] = medio;
+      resultado['estado'] = respuesta['estado'];
+      await _base.actualizar(_ambito, fila['uuid'] as String, {
+        'resultado': jsonEncode(resultado),
+      });
+      if (!mounted) return;
+      if (respuesta['estado'] == 'PAGADO') {
+        setState(
+          () => _aviso = 'Esta compra ya fue pagada. Consulta Mis pagos.',
+        );
+        return;
+      }
+      if (medio == 'qr') {
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) =>
+                PagoQrScreen(checkout: CheckoutQrResponse.fromJson(respuesta)),
+          ),
+        );
+      } else {
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => PagoStripeScreen(
+              checkoutUrl: respuesta['checkout_url'] as String,
+              ordenId: respuesta['orden_id'] as int,
+            ),
+          ),
+        );
+      }
+      final orden = await ApiClient.get(
+        '${ApiConstants.baseUrl}/pagos/orden/${respuesta['orden_id']}',
+      ) as Map<String, dynamic>;
+      resultado['estado'] = orden['estado'];
+      await _base.actualizar(_ambito, fila['uuid'] as String, {
+        'resultado': jsonEncode(resultado),
+      });
+      await _cargar();
+    } catch (error) {
+      if (mounted) {
+        setState(() => _aviso = 'No se pudo iniciar el pago: $error');
+      }
+    } finally {
+      if (mounted) setState(() => _guardando = false);
+    }
+  }
+
   Widget _operacion(Map<String, Object?> fila) {
     final venta = fila['tipo'] == 'VENTA';
     final rechazada = ['RECHAZADA', 'EN CONFLICTO'].contains(fila['estado']);
@@ -544,8 +668,74 @@ class _OperacionesOfflineScreenState extends State<OperacionesOfflineScreen> {
     final estado = fila['estado'] == 'ENVIANDO' && !_sincronizando
         ? 'PENDIENTE'
         : fila['estado'];
+    if (fila['tipo'] == 'COMPRA') {
+      final resultado = fila['resultado'] == null
+          ? null
+          : jsonDecode(fila['resultado'] as String) as Map<String, dynamic>;
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Compra · ${resultado?['estado'] ?? estado}'),
+              Text('Referencia: ${fila['uuid']}'),
+              if (fila['motivo'] != null) Text('${fila['motivo']}'),
+              if (resultado?['orden_id'] == null)
+                OutlinedButton(
+                  onPressed: widget.soloLocal || _guardando
+                      ? null
+                      : () => _recotizar(fila),
+                  child: const Text('Actualizar cotización'),
+                ),
+              if (resultado != null) ...[
+                Text(
+                  'Total actualizado: Bs ${resultado['total']}. Recojo en sucursal · Estado: ${resultado['estado']}.',
+                ),
+                const Text(
+                  'Al continuar aceptas el total actualizado. Se comprobarán nuevamente el stock y los precios.',
+                ),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    FilledButton(
+                      onPressed:
+                          widget.soloLocal ||
+                              _guardando ||
+                              resultado['estado'] == 'PAGADO' ||
+                              (resultado['medio'] != null &&
+                                  resultado['medio'] != 'stripe')
+                          ? null
+                          : () => _pagarCompra(fila, 'stripe'),
+                      child: const Text('Pagar con Stripe'),
+                    ),
+                    OutlinedButton(
+                      onPressed:
+                          widget.soloLocal ||
+                              _guardando ||
+                              resultado['estado'] == 'PAGADO' ||
+                              (resultado['medio'] != null &&
+                                  resultado['medio'] != 'qr')
+                          ? null
+                          : () => _pagarCompra(fila, 'qr'),
+                      child: const Text('Pagar con QR'),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
     return ListTile(
-      title: Text('${venta ? 'Venta de contado' : 'Reserva'} · $estado'),
+      title: Text(
+        '${venta
+            ? 'Venta de contado'
+            : fila['tipo'] == 'RESERVA'
+            ? 'Reserva'
+            : 'Cambio de prendas'} · $estado',
+      ),
       subtitle: Text(
         [
           'Referencia: ${fila['uuid']}',

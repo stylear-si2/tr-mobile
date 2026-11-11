@@ -61,6 +61,7 @@ dependencies:
   local_auth: ^3.0.2
   connectivity_plus: ^7.3.2
   uuid: ^4.6.0
+  audioplayers: ^6.8.1
 dev_dependencies:
   flutter_test:
     sdk: flutter

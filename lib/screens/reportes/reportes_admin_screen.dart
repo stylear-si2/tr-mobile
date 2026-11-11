@@ -16,6 +16,9 @@ import 'package:intl/intl.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/network/api_exceptions.dart';
 import '../../models/reporte_models.dart';
+import '../../models/analisis_reporte.dart';
+import 'analisis_reporte_panel.dart';
+import 'grafico_reporte_ia.dart';
 import '../../services/file_download_service.dart';
 import '../../services/reporte_service.dart';
 import '../../services/voz_service.dart';
@@ -42,6 +45,8 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
   int? _sucursalId;
   String _agrupacion = 'DIA';
   bool _porSucursal = false;
+  int? _categoriaId;
+  int? _productoId;
   int _limite = 10;
   bool _soloBajoStock = false;
   String? _estado;
@@ -62,6 +67,8 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
   ReporteFiltros? _filtrosResultado;
   String? _tipoVenta;
   int _revisionConsulta = 0;
+  int _revisionAnalisis = 0;
+  AnalisisReporte? _analisis;
   bool get _esAdmin => context.read<AuthProvider>().esAdmin;
   bool _capacidad(String clave) =>
       context.read<PlanProvider>().capacidades?.habilita(clave) == true;
@@ -126,7 +133,11 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
     setState(() {
       _generando = true;
       _errorReporte = null;
-      if (!reutilizar) _resultado = null;
+      if (!reutilizar) {
+        _resultado = null;
+        _analisis = null;
+        _revisionAnalisis++;
+      }
     });
 
     try {
@@ -135,6 +146,22 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
       if (mounted && vigente) {
         if (revision != _revisionConsulta) return;
         setState(() {
+          if (_resultado != null &&
+              (jsonEncode(_resultado!.resumen) !=
+                      jsonEncode(resultado.resumen) ||
+                  jsonEncode(
+                        _resultado!.serieGrafico
+                            .map((s) => [s.label, s.valor])
+                            .toList(),
+                      ) !=
+                      jsonEncode(
+                        resultado.serieGrafico
+                            .map((s) => [s.label, s.valor])
+                            .toList(),
+                      ))) {
+            _analisis = null;
+            _revisionAnalisis++;
+          }
           _resultado = resultado;
           _filtrosResultado = filtros;
         });
@@ -181,11 +208,17 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
         ext = 'html';
         mimeType = 'text/html; charset=utf-8';
       } else if (formato == 'pdf') {
-        bytes = await ReporteService.exportarPdf(filtros);
+        bytes = await ReporteService.exportarPdf(
+          filtros,
+          analisisId: _analisis?.id,
+        );
         ext = 'pdf';
         mimeType = 'application/pdf';
       } else {
-        bytes = await ReporteService.exportarExcel(filtros);
+        bytes = await ReporteService.exportarExcel(
+          filtros,
+          analisisId: _analisis?.id,
+        );
         ext = 'xlsx';
         mimeType =
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -390,6 +423,8 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
     agrupacion: _agrupacion,
     porSucursal:
         _tipoSeleccionado == TipoReporte.productosMasVendidos && _porSucursal,
+    categoriaId: _categoriaId,
+    productoId: _productoId,
     limite: _limite,
     soloBajoStock: _soloBajoStock,
     estado: _estado,
@@ -780,6 +815,8 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
     }
     _porSucursal = f['por_sucursal'] == true;
     _limite = int.tryParse(f['limite']?.toString() ?? '') ?? 10;
+    _categoriaId = (f['categoria_id'] as num?)?.toInt();
+    _productoId = (f['producto_id'] as num?)?.toInt();
     if (f.containsKey('agrupacion') && f['agrupacion'] != null) {
       _agrupacion = f['agrupacion'].toString();
     }
@@ -866,6 +903,8 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
   bool _usaFiltroEntrega() {
     return {
       TipoReporte.ventas,
+      TipoReporte.ventasPorSucursal,
+      TipoReporte.ingresosPorCategoria,
       TipoReporte.productosMasVendidos,
       TipoReporte.pagos,
     }.contains(_tipoSeleccionado);
@@ -1154,6 +1193,8 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
                     selected: seleccionado,
                     onSelected: (_) => setState(() {
                       _tipoSeleccionado = tipo;
+                      _categoriaId = null;
+                      _productoId = null;
                       _estado = null;
                       _metodoPago = null;
                       _proveedorPago = null;
@@ -1268,34 +1309,12 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
                 _resultado = null;
               }),
             ),
-            DropdownButtonFormField<int>(
-              initialValue: [5, 10, 20, 50, 100].contains(_limite)
-                  ? _limite
-                  : null,
-              decoration: const InputDecoration(
-                labelText: 'Cantidad de productos del ranking',
-              ),
-              items: [5, 10, 20, 50, 100]
-                  .map(
-                    (n) =>
-                        DropdownMenuItem(value: n, child: Text('$n productos')),
-                  )
-                  .toList(),
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() {
-                    _limite = value;
-                    _resultado = null;
-                  });
-                }
-              },
-            ),
             const SizedBox(height: 16),
           ],
           _SectionTitle(titulo: 'Agrupación de datos'),
           const SizedBox(height: 10),
           Row(
-            children: ['DIA', 'MES'].map((ag) {
+            children: ['DIA', 'SEMANA', 'MES'].map((ag) {
               final sel = _agrupacion == ag;
               return Expanded(
                 child: GestureDetector(
@@ -1311,7 +1330,11 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
                       ),
                     ),
                     child: Text(
-                      ag == 'DIA' ? 'Por Día' : 'Por Mes',
+                      ag == 'DIA'
+                          ? 'Día'
+                          : ag == 'SEMANA'
+                          ? 'Semana'
+                          : 'Mes',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 13,
@@ -1326,6 +1349,55 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
           ),
           const SizedBox(height: 16),
 
+          if ([
+            TipoReporte.ventas,
+            TipoReporte.ventasPorSucursal,
+            TipoReporte.ingresosPorCategoria,
+            TipoReporte.productosMasVendidos,
+            TipoReporte.inventario,
+          ].contains(_tipoSeleccionado)) ...[
+            _SectionTitle(titulo: 'Categoría y producto'),
+            const SizedBox(height: 10),
+            _DropdownFiltro<int>(
+              value: _categoriaId,
+              hint: 'Todas las categorías',
+              items: {
+                for (final c
+                    in _catalogo?.categorias ?? <ReporteCatalogoItem>[])
+                  int.parse(c.id): c.nombre,
+              },
+              onChanged: (v) => setState(() {
+                _categoriaId = v;
+                _productoId = null;
+              }),
+            ),
+            const SizedBox(height: 10),
+            _DropdownFiltro<int>(
+              value: _productoId,
+              hint: 'Todos los productos',
+              items: {
+                for (final p in _catalogo?.productos ?? <ReporteCatalogoItem>[])
+                  if (_categoriaId == null || p.categoriaId == _categoriaId)
+                    int.parse(p.id): p.nombre,
+              },
+              onChanged: (v) => setState(() => _productoId = v),
+            ),
+            const SizedBox(height: 16),
+          ],
+          if (_tipoSeleccionado == TipoReporte.productosMasVendidos) ...[
+            _SectionTitle(titulo: 'Productos del ranking'),
+            const SizedBox(height: 10),
+            _DropdownFiltro<int>(
+              value: _limite,
+              hint: 'Cantidad',
+              items: {
+                for (final n in {_limite, 5, 10, 20, 50, 100})
+                  n: '$n productos',
+              },
+              onChanged: (v) => setState(() => _limite = v ?? 10),
+            ),
+            const SizedBox(height: 16),
+          ],
           if (_usaFiltroEstado()) ...[
             _SectionTitle(titulo: 'Estado / tipo'),
             const SizedBox(height: 10),
@@ -1647,6 +1719,17 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
           _ReporteHeader(resultado: r),
           const SizedBox(height: 16),
 
+          AnalisisReportePanel(
+            key: ValueKey(_revisionAnalisis),
+            filtros: _filtrosResultado!,
+            firmaResultado: r.firmaResultado,
+            habilitado: _capacidad('reportes_interpretacion'),
+            vozHabilitada: _capacidad('reportes_voz'),
+            onResultado: (a) {
+              if (vigente) setState(() => _analisis = a);
+            },
+          ),
+          const SizedBox(height: 16),
           // Indicadores
           if (r.indicadores.isNotEmpty) ...[
             _GridIndicadores(indicadores: r.indicadores),
@@ -1655,7 +1738,14 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
 
           // Gráfico de barras
           if (r.serieGrafico.isNotEmpty) ...[
-            _GraficoBarras(serie: r.serieGrafico, titulo: r.titulo),
+            if (_analisis case final a?)
+              GraficoReporteIA(
+                serie: r.serieGrafico,
+                tipo: a.grafico,
+                titulo: r.titulo,
+              )
+            else
+              _GraficoBarras(serie: r.serieGrafico, titulo: r.titulo),
             const SizedBox(height: 16),
           ],
 

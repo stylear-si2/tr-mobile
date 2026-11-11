@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import '../core/constants/api_constants.dart';
 import '../core/network/api_client.dart';
 import '../models/reporte_models.dart';
+import '../models/analisis_reporte.dart';
 
 class ReporteService {
   ReporteService._();
@@ -12,6 +13,22 @@ class ReporteService {
     final res = await ApiClient.get(ApiConstants.reportesCatalogo);
     return ReporteCatalogo.fromJson(res as Map<String, dynamic>);
   }
+
+  static Future<AnalisisReporte> analizar(
+    ReporteFiltros filtros, {
+    String? firmaResultado,
+  }) async {
+    final res = await ApiClient.post(
+      '${ApiConstants.baseUrl}/reportes/analizar',
+      body: {...filtros.toJson(), 'firma_resultado': ?firmaResultado},
+    );
+    return AnalisisReporte.fromJson(Map<String, dynamic>.from(res as Map));
+  }
+
+  static Future<Uint8List> audioAnalisis(String id) => ApiClient.postBytes(
+    '${ApiConstants.baseUrl}/reportes/audio',
+    body: {'analisis_id': id},
+  );
 
   /// Genera un reporte según los filtros indicados.
   static Future<ReporteResultado> generar(ReporteFiltros filtros) async {
@@ -23,18 +40,24 @@ class ReporteService {
   }
 
   /// Exporta el reporte como PDF (bytes).
-  static Future<Uint8List> exportarPdf(ReporteFiltros filtros) async {
+  static Future<Uint8List> exportarPdf(
+    ReporteFiltros filtros, {
+    String? analisisId,
+  }) async {
     return ApiClient.postBytes(
       ApiConstants.reportesExportarPdf,
-      body: filtros.toJson(),
+      body: {...filtros.toJson(), 'analisis_id': ?analisisId},
     );
   }
 
   /// Exporta el reporte como Excel (bytes).
-  static Future<Uint8List> exportarExcel(ReporteFiltros filtros) async {
+  static Future<Uint8List> exportarExcel(
+    ReporteFiltros filtros, {
+    String? analisisId,
+  }) async {
     return ApiClient.postBytes(
       ApiConstants.reportesExportarExcel,
-      body: filtros.toJson(),
+      body: {...filtros.toJson(), 'analisis_id': ?analisisId},
     );
   }
 
