@@ -29,6 +29,8 @@ class ReporteFiltros {
   final int? sucursalId;
   final String agrupacion; // 'DIA' | 'MES'
   final bool soloBajoStock;
+  final bool porSucursal;
+  final int limite;
   final String? tipoVenta;
   final String? estado;
   final String? metodoPago;
@@ -44,6 +46,8 @@ class ReporteFiltros {
     this.sucursalId,
     this.agrupacion = 'DIA',
     this.soloBajoStock = false,
+    this.porSucursal = false,
+    this.limite = 10,
     this.tipoVenta,
     this.estado,
     this.metodoPago,
@@ -60,6 +64,8 @@ class ReporteFiltros {
     'sucursal_id': sucursalId,
     'agrupacion': agrupacion,
     'solo_bajo_stock': soloBajoStock,
+    'por_sucursal': porSucursal,
+    'limite': limite,
     'tipo_venta': tipoVenta,
     'estado': estado,
     'metodo_pago': metodoPago,

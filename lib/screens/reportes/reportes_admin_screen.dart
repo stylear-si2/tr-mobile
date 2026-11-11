@@ -41,6 +41,8 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
   DateTime _fechaHasta = DateTime.now();
   int? _sucursalId;
   String _agrupacion = 'DIA';
+  bool _porSucursal = false;
+  int _limite = 10;
   bool _soloBajoStock = false;
   String? _estado;
   String? _metodoPago;
@@ -386,6 +388,9 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
     fechaHasta: DateFormat(_dateFormat).format(_fechaHasta),
     sucursalId: _sucursalId,
     agrupacion: _agrupacion,
+    porSucursal:
+        _tipoSeleccionado == TipoReporte.productosMasVendidos && _porSucursal,
+    limite: _limite,
     soloBajoStock: _soloBajoStock,
     estado: _estado,
     metodoPago: _metodoPago,
@@ -773,6 +778,8 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
         _sucursalId = int.tryParse(sucursalValor?.toString() ?? '');
       }
     }
+    _porSucursal = f['por_sucursal'] == true;
+    _limite = int.tryParse(f['limite']?.toString() ?? '') ?? 10;
     if (f.containsKey('agrupacion') && f['agrupacion'] != null) {
       _agrupacion = f['agrupacion'].toString();
     }
@@ -1251,6 +1258,40 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
           ],
 
           // Agrupación
+          if (_tipoSeleccionado == TipoReporte.productosMasVendidos) ...[
+            SwitchListTile.adaptive(
+              title: const Text('Ranking por sucursal'),
+              subtitle: Text('Hasta $_limite productos por cada sucursal'),
+              value: _porSucursal,
+              onChanged: (value) => setState(() {
+                _porSucursal = value;
+                _resultado = null;
+              }),
+            ),
+            DropdownButtonFormField<int>(
+              initialValue: [5, 10, 20, 50, 100].contains(_limite)
+                  ? _limite
+                  : null,
+              decoration: const InputDecoration(
+                labelText: 'Cantidad de productos del ranking',
+              ),
+              items: [5, 10, 20, 50, 100]
+                  .map(
+                    (n) =>
+                        DropdownMenuItem(value: n, child: Text('$n productos')),
+                  )
+                  .toList(),
+              onChanged: (value) {
+                if (value != null) {
+                  setState(() {
+                    _limite = value;
+                    _resultado = null;
+                  });
+                }
+              },
+            ),
+            const SizedBox(height: 16),
+          ],
           _SectionTitle(titulo: 'Agrupación de datos'),
           const SizedBox(height: 10),
           Row(
