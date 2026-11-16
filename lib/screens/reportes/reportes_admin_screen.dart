@@ -1751,11 +1751,38 @@ class _ReportesAdminScreenState extends State<ReportesAdminScreen>
 
           // Tabla de datos
           if (r.filas.isNotEmpty) ...[
-            _TablaReporte(
-              key: ValueKey(r.pagina),
-              columnas: r.columnas,
-              filas: r.filas,
-            ),
+            if (_filtrosResultado!.porSucursal)
+              ...{
+                for (final fila in r.filas)
+                  fila['sucursal_id']: fila['sucursal'],
+              }.entries.expand(
+                (sucursal) => <Widget>[
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: _SectionTitle(
+                      titulo:
+                          '${sucursal.value} · Top ${_filtrosResultado!.limite} productos',
+                    ),
+                  ),
+                  _TablaReporte(
+                    key: ValueKey('${r.pagina}-${sucursal.key}'),
+                    columnas: r.columnas
+                        .where(
+                          (c) => c.key != 'sucursal_id' && c.key != 'sucursal',
+                        )
+                        .toList(),
+                    filas: r.filas
+                        .where((fila) => fila['sucursal_id'] == sucursal.key)
+                        .toList(),
+                  ),
+                ],
+              )
+            else
+              _TablaReporte(
+                key: ValueKey(r.pagina),
+                columnas: r.columnas,
+                filas: r.filas,
+              ),
             Wrap(
               spacing: 12,
               crossAxisAlignment: WrapCrossAlignment.center,
